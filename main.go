@@ -11,6 +11,7 @@ import (
 	"github.com/joho/godotenv"
 	"go-uploader/config"
 	"go-uploader/controllers"
+	"go-uploader/middleware"
 	"go-uploader/utils"
 	"log"
 )
@@ -44,14 +45,8 @@ func main() {
 	app.Use(cors.New())
 	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
 
-	// Routes
-	app.Get("/", controllers.Health)
-	app.Get("/health", controllers.Health)
-
-	api := app.Group("/v1")
-	api.Get("/health", controllers.Health)
-
-	api.Get("/get", controllers.DownloadFile)
+	app.Use(middleware.Attach(&minioClients))
+	app.Get("*", controllers.DownloadFile)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)

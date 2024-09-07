@@ -7,24 +7,20 @@ import (
 	"go-uploader/config"
 	"go-uploader/models"
 	"io"
+	"log"
+	"slices"
+	"strings"
 )
 
 func DownloadFile(ctx *fiber.Ctx) error {
-	path := ctx.Query("path", "")
-	if len(path) == 0 {
-		return ctx.Status(400).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "path is required",
-		})
-	}
+	reqPath := ctx.Path()
+	var spilitted []string = strings.Split(reqPath, "/")
 
-	bucket := ctx.Query("bucket", "")
-	if len(bucket) == 0 {
-		return ctx.Status(400).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "bucket is required",
-		})
-	}
+	bucket := spilitted[1]
+	spilitted = slices.Delete(spilitted, 0, 2)
+	path := strings.Join(spilitted, "/")
+
+	log.Printf("choosed %s bucket and downloading file %s", bucket, path)
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
 	object, err := minioClient.Storage.Conn().GetObject(context.Background(), bucket, path, minio.GetObjectOptions{})
