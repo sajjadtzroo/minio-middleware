@@ -14,8 +14,8 @@ import (
 
 func DownloadFile(ctx *fiber.Ctx) error {
 	reqPath := strings.Split(ctx.Path(), "/")
-	if len(reqPath) < 3 {
-		if reqPath[1] == "favicon.ico" {
+	if len(reqPath) < 4 {
+		if reqPath[2] == "favicon.ico" {
 			return ctx.SendStatus(404)
 		}
 
@@ -25,8 +25,8 @@ func DownloadFile(ctx *fiber.Ctx) error {
 		})
 	}
 
-	bucket := reqPath[1]
-	reqPath = slices.Delete(reqPath, 0, 2)
+	bucket := reqPath[2]
+	reqPath = slices.Delete(reqPath, 1, 3)
 	path := strings.Join(reqPath, "/")
 
 	log.Printf("choosed %s bucket and downloading file %s", bucket, path)
@@ -38,6 +38,13 @@ func DownloadFile(ctx *fiber.Ctx) error {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
 			Message: err.Error(),
+		})
+	}
+
+	if object == nil {
+		return ctx.Status(404).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "File not found",
 		})
 	}
 

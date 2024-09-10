@@ -12,8 +12,10 @@ import (
 	"go-uploader/config"
 	"go-uploader/controllers"
 	"go-uploader/middleware"
+	"go-uploader/pkg/telegram_api"
 	"go-uploader/utils"
 	"log"
+	"os"
 )
 
 const PORT = "3000"
@@ -28,6 +30,11 @@ func main() {
 	// Initiate
 	minioConfig := config.GetMinioCredentials()
 	minioClients := config.GetMinIOClients(minioConfig)
+
+	telegramBot := telegram_api.New(os.Getenv("BOT_TELEGRAM"))
+	instagramBot := telegram_api.New(os.Getenv("BOT_INSTAGRAM"))
+	trackerBot := telegram_api.New(os.Getenv("BOT_TRACKER"))
+	influencerBot := telegram_api.New(os.Getenv("BOT_INFLUENCER"))
 
 	app := fiber.New(fiber.Config{
 		AppName:           "Go Downloader",
@@ -46,7 +53,17 @@ func main() {
 	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
 
 	app.Use(middleware.Attach(&minioClients))
-	app.Get("*", controllers.DownloadFile)
+	app.Use(func(ctx *fiber.Ctx) error {
+		ctx.Locals("BOT_TELEGRAM", telegramBot)
+		ctx.Locals("BOT_INSTAGRAM", instagramBot)
+		ctx.Locals("BOT_TRACKER", trackerBot)
+		ctx.Locals("BOT_INFLUENCER", influencerBot)
+		return ctx.Next()
+	})
+
+	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
+	//app.Post("/direct", controllers.UploadFile)
+	//app.Get("/direct/*", controllers.DownloadFile)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)
