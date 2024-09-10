@@ -62,8 +62,8 @@ func main() {
 	})
 
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
-	//app.Post("/direct", controllers.UploadFile)
-	//app.Get("/direct/*", controllers.DownloadFile)
+	app.Post("/direct", controllers.UploadFile)
+	app.Get("/direct/*", controllers.DownloadFile)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)
