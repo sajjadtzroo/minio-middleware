@@ -3,6 +3,7 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"github.com/gofiber/fiber/v2"
@@ -156,7 +157,12 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 		})
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	res, err := client.Do(req)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
