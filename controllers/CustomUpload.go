@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/utils"
 	"io"
+	"log"
+	"mime/multipart"
+	"net/http"
+	"net/url"
+	"slices"
+	"strings"
 )
 
 func UploadFile(ctx *fiber.Ctx) error {
@@ -37,7 +44,10 @@ func UploadFile(ctx *fiber.Ctx) error {
 	}
 
 	src, err := file.Open()
-	defer src.Close()
+	defer func(src multipart.File) {
+		_ = src.Close()
+	}(src)
+
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -96,5 +106,106 @@ func UploadFile(ctx *fiber.Ctx) error {
 	return ctx.Status(200).JSON(models.UploadedResponse{
 		Result: true,
 		FileId: hex.EncodeToString(fileId),
+	})
+}
+
+func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
+	bodyRaw := ctx.Body()
+	var body models.DownLoadFromLinkRequest
+	if err := json.Unmarshal(bodyRaw, &body); err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	requestURI, err := url.ParseRequestURI(body.Link)
+	if err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	if !slices.Contains(utils.ValidBuckets, body.Bucket) {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "Bucket Not Found",
+		})
+	}
+
+	if len(body.FileName) == 0 {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "File Name not set",
+		})
+	}
+
+	if len(strings.Split(body.FileName, ".")) > 1 {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "File name shouldn't have extension",
+		})
+	}
+
+	req, err := http.NewRequest("GET", requestURI.String(), nil)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(res.Body)
+
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	file := bytes.NewReader(resBody)
+	mimeType := res.Header.Get("Content-Type")
+	fileExtension, err := utils.GetExtensionFromMimeType(mimeType)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	log.Printf("File Extension: %v", fileExtension)
+
+	minioClient := ctx.Locals("minio").(*config.MinIOClients)
+	_, err = minioClient.Storage.Conn().PutObject(
+		context.Background(),
+		body.Bucket,
+		body.FileName+fileExtension[0],
+		file,
+		file.Size(),
+		minio.PutObjectOptions{},
+	)
+
+	if err != nil {
+		return ctx.Status(500).JSON(fiber.Map{
+			"result":  false,
+			"message": err.Error(),
+		})
+	}
+
+	return ctx.Status(200).JSON(models.GenericResponse{
+		Result:  true,
+		Message: "Upload Success",
 	})
 }

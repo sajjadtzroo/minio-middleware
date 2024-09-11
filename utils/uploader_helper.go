@@ -10,6 +10,8 @@ type FileDetails struct {
 	Id     string
 }
 
+var ValidBuckets = []string{"instagram", "telegram", "influencer", "tracker"}
+
 const (
 	MaxImageSize = 11 * 1024 * 1024 // 11MB
 	MinImageSize = 10 * 1000        // 10 KB

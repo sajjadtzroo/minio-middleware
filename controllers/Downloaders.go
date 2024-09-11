@@ -61,7 +61,3 @@ func DownloadFile(ctx *fiber.Ctx) error {
 		"message": "File Not Found",
 	})
 }
-
-func DownloadFromLink(ctx *fiber.Ctx) error {
-	body := ctx.Body()
-}

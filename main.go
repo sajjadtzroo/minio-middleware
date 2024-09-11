@@ -63,7 +63,7 @@ func main() {
 		return ctx.Next()
 	})
 
-	app.Post("/instant/link", controllers.DownloadFromLink)
+	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
 
 	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
