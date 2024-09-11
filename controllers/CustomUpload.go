@@ -12,7 +12,6 @@ import (
 	"go-uploader/models"
 	"go-uploader/utils"
 	"io"
-	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -182,7 +181,7 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 	}
 
 	file := bytes.NewReader(resBody)
-	mimeType := res.Header.Get("Content-Type")
+	mimeType := http.DetectContentType(resBody)
 	fileExtension, err := utils.GetExtensionFromMimeType(mimeType)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
@@ -190,8 +189,6 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 			Message: err.Error(),
 		})
 	}
-
-	log.Printf("File Extension: %v", fileExtension)
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
 	_, err = minioClient.Storage.Conn().PutObject(
