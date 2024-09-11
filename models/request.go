@@ -1,7 +1,7 @@
 package models
 
 type DownLoadFromLinkRequest struct {
-	Link     string `json:"link,omitempty"`
-	Bucket   string `json:"bucket,omitempty"`
-	FileName string `json:"fileName,omitempty"`
+	Link     string `json:"link"`
+	Bucket   string `json:"bucket"`
+	FileName string `json:"fileName"`
 }
