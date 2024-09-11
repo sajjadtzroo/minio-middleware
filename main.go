@@ -12,6 +12,7 @@ import (
 	"go-uploader/config"
 	"go-uploader/controllers"
 	"go-uploader/middleware"
+	"go-uploader/pkg/instagram_api"
 	"go-uploader/pkg/telegram_api"
 	"go-uploader/utils"
 	"log"
@@ -31,10 +32,14 @@ func main() {
 	minioConfig := config.GetMinioCredentials()
 	minioClients := config.GetMinIOClients(minioConfig)
 
+	snitchConfiguration := config.NewSnitchConfiguration()
+
 	telegramBot := telegram_api.New(os.Getenv("BOT_TELEGRAM"))
 	instagramBot := telegram_api.New(os.Getenv("BOT_INSTAGRAM"))
 	trackerBot := telegram_api.New(os.Getenv("BOT_TRACKER"))
 	influencerBot := telegram_api.New(os.Getenv("BOT_INFLUENCER"))
+
+	instagramApi := instagram_api.New(os.Getenv("INSTAGRAM_API"))
 
 	app := fiber.New(fiber.Config{
 		AppName:           "Go Downloader",
@@ -60,8 +65,13 @@ func main() {
 		ctx.Locals("BOT_INSTAGRAM", instagramBot)
 		ctx.Locals("BOT_TRACKER", trackerBot)
 		ctx.Locals("BOT_INFLUENCER", influencerBot)
+		ctx.Locals("INSTAGRAM_API", instagramApi)
+
+		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
 		return ctx.Next()
 	})
+
+	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
 	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
