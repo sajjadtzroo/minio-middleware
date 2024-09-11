@@ -40,17 +40,17 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 
 	botName := ctx.Params("botName", "")
 	if !slices.Contains(validBotNames, botName) {
-		return ctx.Status(400).JSON(fiber.Map{
-			"result":  false,
-			"message": "bot name is not valid",
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "bot name is not valid",
 		})
 	}
 
 	fileId := ctx.Params("fileId")
 	if len(fileId) == 0 {
-		return ctx.Status(400).JSON(fiber.Map{
-			"result":  false,
-			"message": "file id is empty",
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "file id is empty",
 		})
 	}
 
@@ -81,9 +81,9 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	botApi := selectBotAPI(ctx, botName)
 	filePath, err := botApi.GetFile(fileId)
 	if err != nil {
-		return ctx.Status(500).JSON(fiber.Map{
-			"result":  false,
-			"message": err.Error(),
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
 		})
 	}
 
@@ -91,17 +91,17 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 
 	fileData, err := botApi.DownloadFile(filePathString)
 	if err != nil {
-		return ctx.Status(500).JSON(fiber.Map{
-			"result":  false,
-			"message": err.Error(),
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
 		})
 	}
 
 	responseFileBody, err := io.ReadAll(fileData)
 	if err != nil {
-		return ctx.Status(500).JSON(fiber.Map{
-			"result":  false,
-			"message": err.Error(),
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
 		})
 	}
 
@@ -118,9 +118,9 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	)
 
 	if err != nil {
-		return ctx.Status(500).JSON(fiber.Map{
-			"result":  false,
-			"message": err.Error(),
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
 		})
 	}
 

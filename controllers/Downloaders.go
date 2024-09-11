@@ -56,8 +56,8 @@ func DownloadFile(ctx *fiber.Ctx) error {
 		}
 	}
 
-	return ctx.Status(404).JSON(fiber.Map{
-		"result":  false,
-		"message": "File Not Found",
+	return ctx.Status(404).JSON(models.GenericResponse{
+		Result:  false,
+		Message: "File Not Found",
 	})
 }

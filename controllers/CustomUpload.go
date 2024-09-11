@@ -198,9 +198,9 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 	)
 
 	if err != nil {
-		return ctx.Status(500).JSON(fiber.Map{
-			"result":  false,
-			"message": err.Error(),
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
 		})
 	}
 
