@@ -52,6 +52,8 @@ func main() {
 	app.Use(cors.New())
 	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
 
+	JWTMiddleware := middleware.Authentication
+
 	app.Use(middleware.Attach(&minioClients))
 	app.Use(func(ctx *fiber.Ctx) error {
 		ctx.Locals("BOT_TELEGRAM", telegramBot)
@@ -61,8 +63,10 @@ func main() {
 		return ctx.Next()
 	})
 
+	app.Post("/instant/link", controllers.DownloadFromLink)
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
-	app.Post("/direct/:bucketName", controllers.UploadFile)
+
+	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
 	app.Get("/direct/*", controllers.DownloadFile)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)

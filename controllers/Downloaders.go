@@ -7,7 +7,7 @@ import (
 	"go-uploader/config"
 	"go-uploader/models"
 	"io"
-	"log"
+	"net/http"
 	"slices"
 	"strings"
 )
@@ -26,38 +26,42 @@ func DownloadFile(ctx *fiber.Ctx) error {
 	}
 
 	bucket := reqPath[2]
-	reqPath = slices.Delete(reqPath, 1, 3)
+	reqPath = slices.Delete(reqPath, 0, 3)
+
 	path := strings.Join(reqPath, "/")
 
-	log.Printf("choosed %s bucket and downloading file %s", bucket, path)
-
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
-	object, err := minioClient.Storage.Conn().GetObject(context.Background(), bucket, path, minio.GetObjectOptions{})
-	defer object.Close()
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
+	objectInfo := minioClient.Storage.Conn().ListObjects(context.Background(), bucket, minio.ListObjectsOptions{
+		Prefix:    path,
+		Recursive: true,
+		UseV1:     true,
+	})
+
+	for info := range objectInfo {
+		if info.Size > 0 {
+			if strings.Split(info.Key, ".")[0] == path {
+				object, err := minioClient.Storage.Conn().GetObject(context.Background(), bucket, info.Key, minio.GetObjectOptions{})
+				if err != nil {
+					return ctx.Status(500).JSON(models.GenericResponse{
+						Result:  false,
+						Message: err.Error(),
+					})
+				}
+
+				data, _ := io.ReadAll(object)
+				ctx.Set("Content-Type", http.DetectContentType(data))
+				_ = object.Close()
+				return ctx.Status(200).Send(data)
+			}
+		}
 	}
 
-	if object == nil {
-		return ctx.Status(404).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "File not found",
-		})
-	}
+	return ctx.Status(404).JSON(fiber.Map{
+		"result":  false,
+		"message": "File Not Found",
+	})
+}
 
-	stat, err := object.Stat()
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
-	}
-
-	data, err := io.ReadAll(object)
-	ctx.Set("Content-Type", stat.ContentType)
-	ctx.Set("ETag", stat.ETag)
-	return ctx.Status(200).Send(data)
+func DownloadFromLink(ctx *fiber.Ctx) error {
+	body := ctx.Body()
 }
