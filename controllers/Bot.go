@@ -8,17 +8,12 @@ import (
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/telegram_api"
+	"go-uploader/utils"
 	"io"
 	"net/http"
 	"slices"
 	"strings"
 )
-
-func getSize(stream io.Reader) int64 {
-	buf := new(bytes.Buffer)
-	_, _ = buf.ReadFrom(stream)
-	return int64(buf.Len())
-}
 
 func selectBotAPI(ctx *fiber.Ctx, botName string) *telegram_api.TelegramAPI {
 	switch botName {
@@ -36,10 +31,8 @@ func selectBotAPI(ctx *fiber.Ctx, botName string) *telegram_api.TelegramAPI {
 }
 
 func DownloadFromTelegram(ctx *fiber.Ctx) error {
-	validBotNames := []string{"instagram", "telegram", "influencer", "tracker"}
-
 	botName := ctx.Params("botName", "")
-	if !slices.Contains(validBotNames, botName) {
+	if !slices.Contains(utils.ValidBuckets, botName) {
 		return ctx.Status(400).JSON(models.GenericResponse{
 			Result:  false,
 			Message: "bot name is not valid",
