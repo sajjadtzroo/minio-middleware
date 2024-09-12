@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-const BaseUrl = "https://api.instagrapi.com"
+const BaseUrl = "https://api.hikerapi.com"
 
 type InstagramApi struct {
 	*http.Client
