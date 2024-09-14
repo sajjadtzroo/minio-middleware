@@ -10,6 +10,7 @@ import (
 	"go-uploader/models"
 	"go-uploader/pkg/instagram_api"
 	"io"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -144,7 +145,8 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		res, err := http.DefaultClient.Do(req)
+		httpClient := http.Client{}
+		res, err := httpClient.Do(req)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -179,7 +181,8 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		photoRes, err := http.DefaultClient.Do(photoReq)
+		httpClientPhotoReq := http.Client{}
+		photoRes, err := httpClientPhotoReq.Do(photoReq)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -239,8 +242,10 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		})
 	}
 
+	log.Printf("X-Proxy-To: %v", profilePicUrl)
 	req.Header.Set("X-Proxy-To", profilePicUrl)
-	picRes, err := http.DefaultClient.Do(req)
+	httpClient := &http.Client{}
+	picRes, err := httpClient.Do(req)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
