@@ -91,7 +91,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		bucketName = "profile-instagram"
 	}
 
-	minioListCtx, cancelMinIOList := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+	minioListCtx, cancelMinIOList := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 	defer cancelMinIOList()
 	objectInfo := minioClient.Storage.Conn().ListObjects(minioListCtx, bucketName, minio.ListObjectsOptions{
 		Prefix:    pk,
@@ -102,7 +102,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	for info := range objectInfo {
 		if info.Size > 0 {
 			if strings.Split(info.Key, ".")[0] == pk {
-				minioGetCtx, cancelMinIOGet := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+				minioGetCtx, cancelMinIOGet := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 				object, err := minioClient.Storage.Conn().GetObject(minioGetCtx, bucketName, info.Key, minio.GetObjectOptions{})
 				if err != nil {
 					cancelMinIOGet()
@@ -136,7 +136,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			reqUrl = "https://tgobserver.darkube.app/getChannelInfo?channel_link=" + userName
 		}
 
-		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 		defer cancelTelegramCtx()
 		req, err := http.NewRequestWithContext(telegramReqCtx, "GET", reqUrl, nil)
 		if err != nil {
@@ -151,7 +151,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 		httpClient := http.Client{
 			Transport: tr,
-			Timeout:   10 * time.Second,
+			Timeout:   30 * time.Second,
 		}
 		res, err := httpClient.Do(req)
 		if err != nil {
@@ -178,7 +178,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		photoReqCtx, cancelPhotoReq := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+		photoReqCtx, cancelPhotoReq := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 		defer cancelPhotoReq()
 		photoReq, err := http.NewRequestWithContext(photoReqCtx, "GET", "https://tgobserver.darkube.app"+telegramProfile.ProfilePhoto, nil)
 		if err != nil {
@@ -192,7 +192,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 		httpClientPhotoReq := http.Client{
-			Timeout:   10 * time.Second,
+			Timeout:   30 * time.Second,
 			Transport: trPhotoReq,
 		}
 		photoRes, err := httpClientPhotoReq.Do(photoReq)
@@ -219,7 +219,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 
 		mimeType := http.DetectContentType(responseFileBody)
-		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 		defer cancelMinioPutObject()
 		file := bytes.NewReader(responseFileBody)
 		_, err = minioClient.Storage.Conn().PutObject(
@@ -245,7 +245,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	snitchConfig := ctx.Locals("SNITCH_CONFIG").(*config.SnitchConfiguration)
-	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 	defer cancelInstagramReq()
 	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", snitchConfig.Url, nil)
 	if err != nil {
@@ -283,7 +283,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	mimeType := http.DetectContentType(bodyRaw)
-	putObjectCtx, cancelPutObject := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+	putObjectCtx, cancelPutObject := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 	defer cancelPutObject()
 	file := bytes.NewReader(bodyRaw)
 	_, err = minioClient.Storage.Conn().PutObject(
