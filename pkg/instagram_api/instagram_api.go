@@ -13,8 +13,8 @@ import (
 const BaseUrl = "https://api.hikerapi.com"
 
 type InstagramApi struct {
-	*http.Client
-	token string
+	client *http.Client
+	token  string
 }
 
 type GetProfileA1Response struct {
@@ -62,7 +62,10 @@ func New(token string) *InstagramApi {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
-	client := &http.Client{Transport: tr}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   10 * time.Second,
+	}
 
 	api := InstagramApi{
 		client,
@@ -86,7 +89,7 @@ func (h *InstagramApi) getProfileV1(username string) (GetProfileV1Response, erro
 
 	req.Header.Set("x-access-key", h.token)
 
-	res, err := h.Client.Do(req)
+	res, err := h.client.Do(req)
 	if err != nil {
 		return GetProfileV1Response{}, err
 	}

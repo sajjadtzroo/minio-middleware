@@ -3,6 +3,7 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
@@ -145,7 +146,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		httpClient := http.Client{}
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		httpClient := http.Client{
+			Transport: tr,
+			Timeout:   10 * time.Second,
+		}
 		res, err := httpClient.Do(req)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
@@ -181,7 +188,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		httpClientPhotoReq := http.Client{}
+		trPhotoReq := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		httpClientPhotoReq := http.Client{
+			Timeout:   10 * time.Second,
+			Transport: trPhotoReq,
+		}
 		photoRes, err := httpClientPhotoReq.Do(photoReq)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
@@ -244,7 +257,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 	log.Printf("X-Proxy-To: %v", profilePicUrl)
 	req.Header.Set("X-Proxy-To", profilePicUrl)
-	httpClient := &http.Client{}
+
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	picRes, err := httpClient.Do(req)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{

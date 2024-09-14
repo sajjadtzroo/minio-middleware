@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 )
 
 func UploadFile(ctx *fiber.Ctx) error {
@@ -158,7 +159,10 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
-	client := &http.Client{Transport: tr}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   10 * time.Second,
+	}
 
 	res, err := client.Do(req)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const BaseUrl = "http://94.130.99.214"
@@ -23,7 +24,10 @@ func New(token string) *TelegramAPI {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
-	client := &http.Client{Transport: tr}
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   10 * time.Second,
+	}
 
 	api := TelegramAPI{
 		client,
