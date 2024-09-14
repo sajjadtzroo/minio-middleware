@@ -16,17 +16,16 @@ const BaseUrl = "http://94.130.99.214"
 const ContentType = "application/json"
 
 type TelegramAPI struct {
-	*http.Client
-	token string
+	client *http.Client
+	token  string
 }
 
 func New(token string) *TelegramAPI {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
 	client := &http.Client{
-		Transport: tr,
-		Timeout:   30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 60 * time.Second,
 	}
 
 	api := TelegramAPI{
@@ -53,7 +52,7 @@ func (http *TelegramAPI) GetFile(fileId string) (string, error) {
 		return "", err
 	}
 
-	response, err := http.Client.Post(reqURL, ContentType, bytes.NewBuffer(body))
+	response, err := http.client.Post(reqURL, ContentType, bytes.NewBuffer(body))
 	if err != nil {
 		return "", err
 	}
@@ -76,7 +75,7 @@ func (http *TelegramAPI) GetFile(fileId string) (string, error) {
 
 func (http *TelegramAPI) DownloadFile(filePath string) (io.Reader, error) {
 	reqURL := BaseUrl + "/file/" + http.token + filePath
-	response, err := http.Client.Get(reqURL)
+	response, err := http.client.Get(reqURL)
 	if err != nil {
 		return nil, err
 	}

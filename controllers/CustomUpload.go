@@ -161,12 +161,11 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 		})
 	}
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
 	client := &http.Client{
-		Transport: tr,
-		Timeout:   30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 60 * time.Second,
 	}
 
 	res, err := client.Do(req)

@@ -150,12 +150,11 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
 		httpClient := http.Client{
-			Transport: tr,
-			Timeout:   30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+			Timeout: 60 * time.Second,
 		}
 		res, err := httpClient.Do(req)
 		if err != nil {
@@ -192,12 +191,11 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		trPhotoReq := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
 		httpClientPhotoReq := http.Client{
-			Timeout:   30 * time.Second,
-			Transport: trPhotoReq,
+			Timeout: 60 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
 		}
 		photoRes, err := httpClientPhotoReq.Do(photoReq)
 		if err != nil {
@@ -263,7 +261,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	req.Header.Set("X-Proxy-To", profilePicUrl)
 
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},

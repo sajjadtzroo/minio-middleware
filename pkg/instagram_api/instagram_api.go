@@ -59,12 +59,11 @@ type GetProfileV1Response struct {
 }
 
 func New(token string) *InstagramApi {
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
 	client := &http.Client{
-		Transport: tr,
-		Timeout:   30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 60 * time.Second,
 	}
 
 	api := InstagramApi{
@@ -76,7 +75,7 @@ func New(token string) *InstagramApi {
 }
 
 func (h *InstagramApi) getProfileV1(username string) (GetProfileV1Response, error) {
-	reqContext, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	reqContext, cancel := context.WithTimeout(context.Background(), time.Second*60)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqContext, "GET", BaseUrl+"/v1/user/by/username", nil)
 	if err != nil {
