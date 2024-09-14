@@ -1,11 +1,13 @@
 package instagram_api
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"time"
 )
 
 const BaseUrl = "https://api.hikerapi.com"
@@ -71,7 +73,9 @@ func New(token string) *InstagramApi {
 }
 
 func (h *InstagramApi) getProfileV1(username string) (GetProfileV1Response, error) {
-	req, err := http.NewRequest("GET", BaseUrl+"/v1/user/by/username", nil)
+	reqContext, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqContext, "GET", BaseUrl+"/v1/user/by/username", nil)
 	if err != nil {
 		return GetProfileV1Response{}, err
 	}

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 )
 
 func DownloadFile(ctx *fiber.Ctx) error {
@@ -88,7 +89,9 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		bucketName = "profile-instagram"
 	}
 
-	objectInfo := minioClient.Storage.Conn().ListObjects(context.Background(), bucketName, minio.ListObjectsOptions{
+	minioListCtx, cancelMinIOList := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelMinIOList()
+	objectInfo := minioClient.Storage.Conn().ListObjects(minioListCtx, bucketName, minio.ListObjectsOptions{
 		Prefix:    pk,
 		Recursive: true,
 		UseV1:     true,
@@ -97,17 +100,27 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	for info := range objectInfo {
 		if info.Size > 0 {
 			if strings.Split(info.Key, ".")[0] == pk {
-				object, err := minioClient.Storage.Conn().GetObject(context.Background(), bucketName, info.Key, minio.GetObjectOptions{})
+				minioGetCtx, cancelMinIOGet := context.WithTimeout(context.Background(), 10*time.Second)
+				object, err := minioClient.Storage.Conn().GetObject(minioGetCtx, bucketName, info.Key, minio.GetObjectOptions{})
 				if err != nil {
+					cancelMinIOGet()
 					return ctx.Status(500).JSON(models.GenericResponse{
 						Result:  false,
 						Message: err.Error(),
 					})
 				}
 
-				data, _ := io.ReadAll(object)
+				data, err := io.ReadAll(object)
+				if err != nil {
+					cancelMinIOGet()
+					return ctx.Status(500).JSON(models.GenericResponse{
+						Result:  false,
+						Message: err.Error(),
+					})
+				}
 				ctx.Set("Content-Type", http.DetectContentType(data))
 				_ = object.Close()
+				cancelMinIOGet()
 				return ctx.Status(200).Send(data)
 			}
 		}
@@ -121,7 +134,17 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			reqUrl = "https://tgobserver.darkube.app/getChannelInfo?channel_link=" + userName
 		}
 
-		res, err := http.Get(reqUrl)
+		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelTelegramCtx()
+		req, err := http.NewRequestWithContext(telegramReqCtx, "GET", reqUrl, nil)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+
+		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -146,7 +169,17 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		photoRes, err := http.Get("https://tgobserver.darkube.app" + telegramProfile.ProfilePhoto)
+		photoReqCtx, cancelPhotoReq := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelPhotoReq()
+		photoReq, err := http.NewRequestWithContext(photoReqCtx, "GET", "https://tgobserver.darkube.app"+telegramProfile.ProfilePhoto, nil)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+
+		photoRes, err := http.DefaultClient.Do(photoReq)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -160,6 +193,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 				Message: "Failed to get profile photo from tgObserver",
 			})
 		}
+
 		responseFileBody, err := io.ReadAll(photoRes.Body)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
@@ -169,9 +203,11 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 
 		mimeType := http.DetectContentType(responseFileBody)
+		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelMinioPutObject()
 		file := bytes.NewReader(responseFileBody)
 		_, err = minioClient.Storage.Conn().PutObject(
-			context.Background(),
+			minioPutObjectCtx,
 			bucketName,
 			pk+".jpg",
 			file,
@@ -193,7 +229,9 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	snitchConfig := ctx.Locals("SNITCH_CONFIG").(*config.SnitchConfiguration)
-	req, err := http.NewRequest("GET", snitchConfig.Url, nil)
+	instagramReqCtx, cancelInstagramReq := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelInstagramReq()
+	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", snitchConfig.Url, nil)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -221,9 +259,11 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	mimeType := http.DetectContentType(bodyRaw)
+	putObjectCtx, cancelPutObject := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelPutObject()
 	file := bytes.NewReader(bodyRaw)
 	_, err = minioClient.Storage.Conn().PutObject(
-		context.Background(),
+		putObjectCtx,
 		bucketName,
 		pk+".jpg",
 		file,
