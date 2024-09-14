@@ -140,7 +140,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			reqUrl = "https://tgobserver.darkube.app/getChannelInfo?channel_link=" + userName
 		}
 
-		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(ctx.UserContext(), 30*time.Second)
+		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 		defer cancelTelegramCtx()
 		req, err := http.NewRequestWithContext(telegramReqCtx, "GET", reqUrl, nil)
 		if err != nil {
@@ -181,7 +181,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		photoReqCtx, cancelPhotoReq := context.WithTimeout(ctx.UserContext(), 30*time.Second)
+		photoReqCtx, cancelPhotoReq := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 		defer cancelPhotoReq()
 		photoReq, err := http.NewRequestWithContext(photoReqCtx, "GET", "https://tgobserver.darkube.app"+telegramProfile.ProfilePhoto, nil)
 		if err != nil {
@@ -221,7 +221,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 
 		mimeType := http.DetectContentType(responseFileBody)
-		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(ctx.UserContext(), 30*time.Second)
+		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 		defer cancelMinioPutObject()
 		file := bytes.NewReader(responseFileBody)
 		_, err = minioClient.Storage.Conn().PutObject(
@@ -247,7 +247,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	snitchConfig := ctx.Locals("SNITCH_CONFIG").(*config.SnitchConfiguration)
-	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 30*time.Second)
+	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 	defer cancelInstagramReq()
 	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", snitchConfig.Url, nil)
 	if err != nil {
@@ -274,7 +274,9 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		})
 	}
 
-	defer picRes.Body.Close()
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(picRes.Body)
 	bodyRaw, _ := io.ReadAll(picRes.Body)
 
 	if picRes.StatusCode != 200 {
@@ -285,7 +287,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	mimeType := http.DetectContentType(bodyRaw)
-	putObjectCtx, cancelPutObject := context.WithTimeout(ctx.UserContext(), 30*time.Second)
+	putObjectCtx, cancelPutObject := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 	defer cancelPutObject()
 	file := bytes.NewReader(bodyRaw)
 	_, err = minioClient.Storage.Conn().PutObject(
