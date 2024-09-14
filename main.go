@@ -73,13 +73,13 @@ func main() {
 		return ctx.Next()
 	})
 
-	app.Get("/profile/:media/:pk/:userName", timeout.NewWithContext(controllers.DownloadProfile, 30*time.Second))
+	app.Get("/profile/:media/:pk/:userName", timeout.NewWithContext(controllers.DownloadProfile, 2*time.Minute))
 
-	app.Post("/instant/link", timeout.NewWithContext(controllers.DownloadFromLinkAndUpload, 60*time.Second))
-	app.Get("/instant/:botName/:fileId", timeout.NewWithContext(controllers.DownloadFromTelegram, 60*time.Second))
+	app.Post("/instant/link", timeout.NewWithContext(controllers.DownloadFromLinkAndUpload, 2*time.Minute))
+	app.Get("/instant/:botName/:fileId", timeout.NewWithContext(controllers.DownloadFromTelegram, 2*time.Minute))
 
-	app.Post("/direct/:bucketName", JWTMiddleware, timeout.NewWithContext(controllers.UploadFile, 60*time.Second))
-	app.Get("/direct/*", timeout.NewWithContext(controllers.DownloadFile, 60*time.Second))
+	app.Post("/direct/:bucketName", JWTMiddleware, timeout.NewWithContext(controllers.UploadFile, 2*time.Minute))
+	app.Get("/direct/*", timeout.NewWithContext(controllers.DownloadFile, 2*time.Minute))
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)
