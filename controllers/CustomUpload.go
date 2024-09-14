@@ -161,7 +161,7 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 	}
 	client := &http.Client{
 		Transport: tr,
-		Timeout:   10 * time.Second,
+		Timeout:   30 * time.Second,
 	}
 
 	res, err := client.Do(req)

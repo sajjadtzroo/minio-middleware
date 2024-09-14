@@ -26,7 +26,7 @@ func New(token string) *TelegramAPI {
 	}
 	client := &http.Client{
 		Transport: tr,
-		Timeout:   10 * time.Second,
+		Timeout:   30 * time.Second,
 	}
 
 	api := TelegramAPI{
