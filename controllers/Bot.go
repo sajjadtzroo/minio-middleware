@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"bytes"
-	"context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
@@ -48,14 +47,14 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	}
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
-	objectInfo := minioClient.Storage.Conn().ListObjects(context.Background(), botName, minio.ListObjectsOptions{
+	objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), botName, minio.ListObjectsOptions{
 		Prefix:    fileId,
 		Recursive: true,
 		UseV1:     true,
 	})
 	for info := range objectInfo {
 		if info.Size > 0 {
-			object, err := minioClient.Storage.Conn().GetObject(context.Background(), botName, info.Key, minio.GetObjectOptions{})
+			object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), botName, info.Key, minio.GetObjectOptions{})
 			if err != nil {
 				return ctx.Status(500).JSON(models.GenericResponse{
 					Result:  false,
@@ -102,7 +101,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 
 	file := bytes.NewReader(responseFileBody)
 	_, err = minioClient.Storage.Conn().PutObject(
-		context.Background(),
+		ctx.UserContext(),
 		botName,
 		fileId+"."+strings.Split(mimeType, "/")[1],
 		file,

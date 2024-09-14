@@ -35,7 +35,7 @@ func DownloadFile(ctx *fiber.Ctx) error {
 	path := strings.Join(reqPath, "/")
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
-	objectInfo := minioClient.Storage.Conn().ListObjects(context.Background(), bucket, minio.ListObjectsOptions{
+	objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), bucket, minio.ListObjectsOptions{
 		Prefix:    path,
 		Recursive: true,
 		UseV1:     true,
@@ -44,7 +44,7 @@ func DownloadFile(ctx *fiber.Ctx) error {
 	for info := range objectInfo {
 		if info.Size > 0 {
 			if strings.Split(info.Key, ".")[0] == path {
-				object, err := minioClient.Storage.Conn().GetObject(context.Background(), bucket, info.Key, minio.GetObjectOptions{})
+				object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), bucket, info.Key, minio.GetObjectOptions{})
 				if err != nil {
 					return ctx.Status(500).JSON(models.GenericResponse{
 						Result:  false,
@@ -81,8 +81,6 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	media := ctx.Params("media")
 	userName := ctx.Params("username")
 
-	routeCtx := context.Background()
-
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
 	var bucketName string
 	if media == "telegram" {
@@ -91,7 +89,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		bucketName = "profile-instagram"
 	}
 
-	minioListCtx, cancelMinIOList := context.WithTimeout(routeCtx, 10*time.Second)
+	minioListCtx, cancelMinIOList := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 	defer cancelMinIOList()
 	objectInfo := minioClient.Storage.Conn().ListObjects(minioListCtx, bucketName, minio.ListObjectsOptions{
 		Prefix:    pk,
@@ -102,7 +100,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	for info := range objectInfo {
 		if info.Size > 0 {
 			if strings.Split(info.Key, ".")[0] == pk {
-				minioGetCtx, cancelMinIOGet := context.WithTimeout(routeCtx, 10*time.Second)
+				minioGetCtx, cancelMinIOGet := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 				object, err := minioClient.Storage.Conn().GetObject(minioGetCtx, bucketName, info.Key, minio.GetObjectOptions{})
 				if err != nil {
 					cancelMinIOGet()
@@ -136,7 +134,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			reqUrl = "https://tgobserver.darkube.app/getChannelInfo?channel_link=" + userName
 		}
 
-		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(routeCtx, 10*time.Second)
+		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 		defer cancelTelegramCtx()
 		req, err := http.NewRequestWithContext(telegramReqCtx, "GET", reqUrl, nil)
 		if err != nil {
@@ -171,7 +169,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		photoReqCtx, cancelPhotoReq := context.WithTimeout(routeCtx, 10*time.Second)
+		photoReqCtx, cancelPhotoReq := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 		defer cancelPhotoReq()
 		photoReq, err := http.NewRequestWithContext(photoReqCtx, "GET", "https://tgobserver.darkube.app"+telegramProfile.ProfilePhoto, nil)
 		if err != nil {
@@ -205,7 +203,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 
 		mimeType := http.DetectContentType(responseFileBody)
-		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(routeCtx, 10*time.Second)
+		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 		defer cancelMinioPutObject()
 		file := bytes.NewReader(responseFileBody)
 		_, err = minioClient.Storage.Conn().PutObject(
@@ -231,7 +229,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	snitchConfig := ctx.Locals("SNITCH_CONFIG").(*config.SnitchConfiguration)
-	instagramReqCtx, cancelInstagramReq := context.WithTimeout(routeCtx, 10*time.Second)
+	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 	defer cancelInstagramReq()
 	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", snitchConfig.Url, nil)
 	if err != nil {
@@ -261,7 +259,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	mimeType := http.DetectContentType(bodyRaw)
-	putObjectCtx, cancelPutObject := context.WithTimeout(routeCtx, 10*time.Second)
+	putObjectCtx, cancelPutObject := context.WithTimeout(ctx.UserContext(), 10*time.Second)
 	defer cancelPutObject()
 	file := bytes.NewReader(bodyRaw)
 	_, err = minioClient.Storage.Conn().PutObject(

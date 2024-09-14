@@ -58,7 +58,7 @@ func (http *TelegramAPI) GetFile(fileId string) (string, error) {
 	resBody, _ := io.ReadAll(response.Body)
 	if response.StatusCode != 200 {
 		log.Printf("token is: " + http.token)
-		return "", errors.New("Telegram Failed " + string(resBody))
+		return "", errors.New("telegram failed " + string(resBody))
 	}
 
 	var result GetFileResponse
@@ -78,7 +78,7 @@ func (http *TelegramAPI) DownloadFile(filePath string) (io.Reader, error) {
 	}
 
 	if response.StatusCode != 200 {
-		return nil, errors.New("Telegram Failed")
+		return nil, errors.New("telegram failed")
 	}
 
 	return response.Body, nil

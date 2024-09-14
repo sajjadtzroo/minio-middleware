@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -89,7 +88,7 @@ func UploadFile(ctx *fiber.Ctx) error {
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
 	filename := utils.CreateFilePath(hex.EncodeToString(fileId), utils.ImageFileTypes[file.Header.Get("Content-Type")])
 	_, err = minioClient.Storage.Conn().PutObject(
-		context.Background(),
+		ctx.UserContext(),
 		bucketName,
 		filename,
 		buf,
@@ -148,7 +147,7 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 		})
 	}
 
-	req, err := http.NewRequest("GET", requestURI.String(), nil)
+	req, err := http.NewRequestWithContext(ctx.UserContext(), "GET", requestURI.String(), nil)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -192,7 +191,7 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
 	_, err = minioClient.Storage.Conn().PutObject(
-		context.Background(),
+		ctx.UserContext(),
 		body.Bucket,
 		body.FileName+fileExtension[0],
 		file,
