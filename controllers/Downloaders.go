@@ -249,6 +249,9 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	snitchConfig := ctx.Locals("SNITCH_CONFIG").(*config.SnitchConfiguration)
 	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 	defer cancelInstagramReq()
+
+	log.Printf("Sntich Proxy Url: %v", snitchConfig.Url)
+
 	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", snitchConfig.Url, nil)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
