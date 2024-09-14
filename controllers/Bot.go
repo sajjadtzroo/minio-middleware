@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
@@ -30,6 +31,8 @@ func selectBotAPI(ctx *fiber.Ctx, botName string) *telegram_api.TelegramAPI {
 }
 
 func DownloadFromTelegram(ctx *fiber.Ctx) error {
+	ctx.SetUserContext(context.Background())
+
 	botName := ctx.Params("botName", "")
 	if !slices.Contains(utils.ValidBuckets, botName) {
 		return ctx.Status(400).JSON(models.GenericResponse{

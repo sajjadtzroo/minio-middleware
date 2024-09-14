@@ -8,7 +8,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/idempotency"
-	"github.com/gofiber/fiber/v2/middleware/timeout"
 	"github.com/joho/godotenv"
 	"go-uploader/config"
 	"go-uploader/controllers"
@@ -18,7 +17,6 @@ import (
 	"go-uploader/utils"
 	"log"
 	"os"
-	"time"
 )
 
 const PORT = "3000"
@@ -73,13 +71,13 @@ func main() {
 		return ctx.Next()
 	})
 
-	app.Get("/profile/:media/:pk/:userName", timeout.NewWithContext(controllers.DownloadProfile, 2*time.Minute))
+	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
-	app.Post("/instant/link", timeout.NewWithContext(controllers.DownloadFromLinkAndUpload, 2*time.Minute))
-	app.Get("/instant/:botName/:fileId", timeout.NewWithContext(controllers.DownloadFromTelegram, 2*time.Minute))
+	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
+	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
 
-	app.Post("/direct/:bucketName", JWTMiddleware, timeout.NewWithContext(controllers.UploadFile, 2*time.Minute))
-	app.Get("/direct/*", timeout.NewWithContext(controllers.DownloadFile, 2*time.Minute))
+	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
+	app.Get("/direct/*", controllers.DownloadFile)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)

@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,8 @@ import (
 )
 
 func UploadFile(ctx *fiber.Ctx) error {
+	ctx.SetUserContext(context.Background())
+
 	form, err := ctx.MultipartForm()
 	if err != nil {
 		return ctx.Status(400).JSON(models.GenericResponse{
@@ -110,6 +113,8 @@ func UploadFile(ctx *fiber.Ctx) error {
 }
 
 func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
+	ctx.SetUserContext(context.Background())
+
 	bodyRaw := ctx.Body()
 	var body models.DownLoadFromLinkRequest
 	if err := json.Unmarshal(bodyRaw, &body); err != nil {

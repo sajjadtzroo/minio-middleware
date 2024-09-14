@@ -19,6 +19,8 @@ import (
 )
 
 func DownloadFile(ctx *fiber.Ctx) error {
+	ctx.SetUserContext(context.Background())
+
 	reqPath := strings.Split(ctx.Path(), "/")
 	if len(reqPath) < 4 {
 		if reqPath[2] == "favicon.ico" {
@@ -79,6 +81,8 @@ type TelegramProfileResponse struct {
 }
 
 func DownloadProfile(ctx *fiber.Ctx) error {
+	ctx.SetUserContext(context.Background())
+
 	pk := ctx.Params("pk")
 	media := ctx.Params("media")
 	userName := ctx.Params("username")
