@@ -73,7 +73,7 @@ func main() {
 		return ctx.Next()
 	})
 
-	app.Get("/profile/:media/:pk/:userName", timeout.NewWithContext(controllers.DownloadProfile, 60*time.Second))
+	app.Get("/profile/:media/:pk/:userName", timeout.NewWithContext(controllers.DownloadProfile, 30*time.Second))
 
 	app.Post("/instant/link", timeout.NewWithContext(controllers.DownloadFromLinkAndUpload, 60*time.Second))
 	app.Get("/instant/:botName/:fileId", timeout.NewWithContext(controllers.DownloadFromTelegram, 60*time.Second))
