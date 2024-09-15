@@ -265,9 +265,9 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
+		//Transport: &http.Transport{
+		//	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		//},
 	}
 	picRes, err := httpClient.Do(req)
 	if err != nil {
