@@ -8,9 +8,6 @@ type SnitchConfiguration struct {
 
 func NewSnitchConfiguration() *SnitchConfiguration {
 	url := os.Getenv("SNITCH_URL")
-	if url == "" {
-		panic("Snitch URL not found")
-	}
 
 	return &SnitchConfiguration{
 		Url: url,

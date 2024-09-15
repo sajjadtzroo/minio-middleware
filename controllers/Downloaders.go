@@ -252,7 +252,14 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 	log.Printf("Sntich Proxy Url: %v", snitchConfig.Url)
 
-	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", snitchConfig.Url, nil)
+	var requestURL = ""
+	if len(snitchConfig.Url) == 0 {
+		requestURL = profilePicUrl
+	} else {
+		requestURL = snitchConfig.Url
+	}
+
+	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", requestURL, nil)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -260,8 +267,12 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("X-Proxy-To: %v", profilePicUrl)
-	req.Header.Set("X-Proxy-To", profilePicUrl)
+	log.Printf("Image-URL: %v", profilePicUrl)
+
+	if requestURL != profilePicUrl {
+		log.Printf("Use-Snitcher")
+		req.Header.Set("X-Proxy-To", profilePicUrl)
+	}
 
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
