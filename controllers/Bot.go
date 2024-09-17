@@ -176,8 +176,8 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 		})
 	}
 
-	return ctx.Status(200).JSON(models.GenericResponse{
-		Result:  true,
-		Message: fileId,
+	return ctx.Status(200).JSON(fiber.Map{
+		"result": true,
+		"fileId": fileId,
 	})
 }

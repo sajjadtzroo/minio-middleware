@@ -72,7 +72,7 @@ func main() {
 		return ctx.Next()
 	})
 
-	app.Post("/upload/telegram/:botName", controllers.UploadToTelegram)
+	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
 
 	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
