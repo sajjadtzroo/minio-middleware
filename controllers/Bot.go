@@ -56,6 +56,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 		Recursive: true,
 		UseV1:     true,
 	})
+
 	for info := range objectInfo {
 		if info.Size > 0 {
 			object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), botName, info.Key, minio.GetObjectOptions{})
@@ -85,7 +86,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 
 	filePathString := botApi.Explode(filePath)
 
-	fileData, err := botApi.DownloadFile(filePathString)
+	fileData, resContentType, err := botApi.DownloadFile(filePathString)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -93,17 +94,20 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 		})
 	}
 
-	responseFileBody, err := io.ReadAll(fileData)
+	err = os.WriteFile("data.txt", fileData, 0755)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: err.Error(),
+			Message: "Cant write file into os",
 		})
 	}
 
-	mimeType := http.DetectContentType(responseFileBody)
+	mimeType := http.DetectContentType(fileData)
+	if strings.Contains(mimeType, "text/plain") {
+		mimeType = resContentType
+	}
 
-	file := bytes.NewReader(responseFileBody)
+	file := bytes.NewReader(fileData)
 	_, err = minioClient.Storage.Conn().PutObject(
 		ctx.UserContext(),
 		botName,
@@ -122,7 +126,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 
 	ctx.Set("X-Serve", "Telegram")
 	ctx.Set("Content-Type", mimeType)
-	return ctx.Send(responseFileBody)
+	return ctx.Send(fileData)
 }
 
 func UploadToTelegram(ctx *fiber.Ctx) error {

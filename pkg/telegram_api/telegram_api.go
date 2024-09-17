@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -76,26 +77,35 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 	return result.Result.FilePath, nil
 }
 
-func (h *TelegramAPI) DownloadFile(filePath string) (io.Reader, error) {
+func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 	reqURL := BaseUrl + "/file/" + h.token + filePath
+	log.Printf("Request URL: %s", reqURL)
+
 	response, err := h.client.Get(reqURL)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+
+	defer response.Body.Close()
+	resBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, "", err
 	}
 
 	if response.StatusCode != 200 {
-		return nil, errors.New("telegram failed")
+		return nil, "", fmt.Errorf("telegram failed: %s", string(resBody))
 	}
 
-	return response.Body, nil
+	resContentType := response.Header.Get("Content-Type")
+	return resBody, resContentType, nil
 }
 
 func (h *TelegramAPI) Explode(filePath string) string {
 	data := strings.Split(filePath, h.token)
 
-	if strings.Contains(data[1], ".") {
-		return strings.Split(data[1], ".")[0]
-	}
+	//if strings.Contains(data[1], ".") {
+	//	return strings.Split(data[1], ".")[0]
+	//}
 
 	return data[1]
 }
