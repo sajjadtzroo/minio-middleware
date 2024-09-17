@@ -14,8 +14,9 @@ import (
 	"time"
 )
 
-// const BaseUrl = "http://94.130.99.214"
-const BaseUrl = "https://api.telegram.org"
+const BaseUrl = "http://94.130.99.214"
+
+// const BaseUrl = "https://api.telegram.org"
 const ContentType = "application/json"
 
 type TelegramAPI struct {
