@@ -11,6 +11,7 @@ import (
 	"go-uploader/utils"
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 )
@@ -122,4 +123,57 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	ctx.Set("X-Serve", "Telegram")
 	ctx.Set("Content-Type", mimeType)
 	return ctx.Send(responseFileBody)
+}
+
+func UploadToTelegram(ctx *fiber.Ctx) error {
+	ctx.SetUserContext(context.Background())
+
+	botName := ctx.Params("botName", "")
+	if !slices.Contains(utils.ValidBuckets, botName) {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "bot name is not valid",
+		})
+	}
+
+	form, err := ctx.MultipartForm()
+	if err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	if len(form.File["file"]) == 0 {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "File not uploaded",
+		})
+	}
+
+	file := form.File["file"][0]
+
+	buf, err := utils.OpenFile(file)
+	if err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	botApi := selectBotAPI(ctx, botName)
+	contentType := http.DetectContentType(buf.Bytes())
+
+	fileId, err := botApi.UploadFile(contentType, file.Filename, buf.Bytes(), os.Getenv("DEST_CHAT_ID"))
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	return ctx.Status(200).JSON(models.GenericResponse{
+		Result:  true,
+		Message: fileId,
+	})
 }

@@ -39,12 +39,6 @@ func UploadFile(ctx *fiber.Ctx) error {
 	}
 
 	file := form.File["file"][0]
-	if file.Size > utils.MaxImageSize || file.Size < utils.MinImageSize {
-		return ctx.Status(422).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "File Size Error",
-		})
-	}
 
 	src, err := file.Open()
 	defer func(src multipart.File) {
@@ -63,13 +57,6 @@ func UploadFile(ctx *fiber.Ctx) error {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
 			Message: err.Error(),
-		})
-	}
-
-	if !utils.ImageAllowedFormats[file.Header.Get("Content-Type")] {
-		return ctx.Status(400).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "Image Format Not Allowed",
 		})
 	}
 

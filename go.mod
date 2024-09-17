@@ -3,6 +3,7 @@ module go-uploader
 go 1.23
 
 require (
+	github.com/davecgh/go-spew v1.1.1
 	github.com/gofiber/contrib/jwt v1.0.10
 	github.com/gofiber/fiber/v2 v2.52.5
 	github.com/gofiber/storage/minio v0.1.0

@@ -47,6 +47,7 @@ func main() {
 		StreamRequestBody: false,
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
+		BodyLimit:         512 * 1024 * 1024, // this is the default limit of 512MB
 	})
 
 	// Middlewares
@@ -54,7 +55,7 @@ func main() {
 	app.Use(earlydata.New())
 	app.Use(idempotency.New())
 	app.Use(helmet.New())
-	app.Use(cors.New())
+	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "*", AllowHeaders: "*"}))
 	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
 
 	JWTMiddleware := middleware.Authentication
@@ -70,6 +71,8 @@ func main() {
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
 		return ctx.Next()
 	})
+
+	app.Post("/upload/telegram/:botName", controllers.UploadToTelegram)
 
 	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
