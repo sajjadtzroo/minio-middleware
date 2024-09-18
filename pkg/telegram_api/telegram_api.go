@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"io"
 	"log"
 	"mime/multipart"
@@ -185,9 +184,6 @@ func (h *TelegramAPI) UploadFile(contentType string, fileName string, data []byt
 	if !tgResponse["ok"].(bool) {
 		return "", fmt.Errorf("telegram API returned an error: %s", string(resBody))
 	}
-
-	// TODO: remove logger later
-	spew.Dump(tgResponse)
 
 	// Get the file_id from the result
 	if formField == "document" || formField == "video" {

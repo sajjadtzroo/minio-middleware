@@ -12,7 +12,6 @@ import (
 	"go-uploader/pkg/telegram_api"
 	"go-uploader/utils"
 	"io"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -246,14 +245,8 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 		_ = Body.Close()
 	}(res.Body)
 
-	_, params, err := mime.ParseMediaType(res.Header.Get("Content-Disposition"))
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
-	}
-	filename := params["filename"] // set to "foo.png"
+	splitUrl := strings.Split(body["link"], "/")
+	fileName := splitUrl[len(splitUrl)-1]
 
 	resBody, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -266,7 +259,7 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 	mimeType := http.DetectContentType(resBody)
 
 	botApi := selectBotAPI(ctx, botName)
-	fileId, err := botApi.UploadFile(mimeType, filename, resBody, os.Getenv("DEST_CHAT_ID"))
+	fileId, err := botApi.UploadFile(mimeType, fileName, resBody, os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
