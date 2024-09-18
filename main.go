@@ -55,7 +55,7 @@ func main() {
 	app.Use(earlydata.New())
 	app.Use(idempotency.New())
 	app.Use(helmet.New())
-	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "*", AllowHeaders: "*", AllowCredentials: true}))
+	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "*", AllowHeaders: "*"}))
 	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
 
 	JWTMiddleware := middleware.Authentication
