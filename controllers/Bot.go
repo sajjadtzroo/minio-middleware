@@ -3,6 +3,8 @@ package controllers
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
@@ -10,10 +12,13 @@ import (
 	"go-uploader/pkg/telegram_api"
 	"go-uploader/utils"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 func selectBotAPI(ctx *fiber.Ctx, botName string) *telegram_api.TelegramAPI {
@@ -180,4 +185,98 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 		"result": true,
 		"fileId": fileId,
 	})
+}
+
+func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
+	botName := ctx.Params("botName", "")
+	if !slices.Contains(utils.ValidBuckets, botName) {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "Bucket Not Found",
+		})
+	}
+
+	bodyRaw := ctx.Body()
+	var body map[string]string
+	if err := json.Unmarshal(bodyRaw, &body); err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	if _, ok := body["link"]; !ok {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "link is empty",
+		})
+	}
+
+	requestURI, err := url.ParseRequestURI(body["link"])
+	if err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "link is invalid",
+		})
+	}
+
+	req, err := http.NewRequestWithContext(ctx.UserContext(), "GET", requestURI.String(), nil)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Timeout: 60 * time.Second,
+	}
+
+	res, err := client.Do(req)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(res.Body)
+
+	_, params, err := mime.ParseMediaType(res.Header.Get("Content-Disposition"))
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+	filename := params["filename"] // set to "foo.png"
+
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	mimeType := http.DetectContentType(resBody)
+
+	botApi := selectBotAPI(ctx, botName)
+	fileId, err := botApi.UploadFile(mimeType, filename, resBody, os.Getenv("DEST_CHAT_ID"))
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	return ctx.Status(200).JSON(fiber.Map{
+		"result": true,
+		"fileId": fileId,
+	})
+
 }
