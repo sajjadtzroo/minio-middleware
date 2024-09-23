@@ -72,7 +72,7 @@ func main() {
 		return ctx.Next()
 	})
 
-	app.Post("/zip/multi", controllers.ZipMulti)
+	app.Post("/zip/multi", controllers.ZipMultipleFiles)
 
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
