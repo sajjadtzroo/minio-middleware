@@ -322,11 +322,6 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 }
 
-type ZipFile struct {
-	Data        []byte
-	ContentType string
-}
-
 func ZipMulti(ctx *fiber.Ctx) error {
 	var body struct {
 		FileIds []string `json:"fileIds"`
