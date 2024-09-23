@@ -98,14 +98,6 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 		})
 	}
 
-	err = os.WriteFile("data.txt", fileData, 0755)
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "Cant write file into os",
-		})
-	}
-
 	mimeType := http.DetectContentType(fileData)
 	if strings.Contains(mimeType, "text/plain") {
 		mimeType = resContentType

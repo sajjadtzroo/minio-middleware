@@ -1,18 +1,22 @@
 package controllers
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/instagram_api"
+	"go-uploader/utils"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -316,4 +320,98 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	ctx.Set("Content-Type", mimeType)
 	return ctx.Status(200).Send(bodyRaw)
 
+}
+
+type ZipFile struct {
+	Data        []byte
+	ContentType string
+}
+
+func ZipMulti(ctx *fiber.Ctx) error {
+	var body struct {
+		FileIds []string `json:"fileIds"`
+		BotName string   `json:"botName"`
+	}
+
+	bodyRaw := ctx.Body()
+	if err := json.Unmarshal(bodyRaw, &body); err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	if !slices.Contains(utils.ValidBuckets, body.BotName) {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "BotName is invalid",
+		})
+	}
+
+	botApi := selectBotAPI(ctx, body.BotName)
+	archiveName := fmt.Sprintf("archive-%s-%s.zip", body.BotName, time.Now().Format("2006-01-02__15:04:05"))
+	archive, err := os.Create(archiveName)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	defer archive.Close()
+	defer os.Remove(archiveName)
+
+	zipWriter := zip.NewWriter(archive)
+	defer zipWriter.Close()
+	for _, fileId := range body.FileIds {
+		filePath, err := botApi.GetFile(fileId)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+
+		filePathString := botApi.Explode(filePath)
+		fileData, resContentType, err := botApi.DownloadFile(filePathString)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+
+		mimeType := http.DetectContentType(fileData)
+		if strings.Contains(mimeType, "text/plain") {
+			mimeType = resContentType
+		}
+
+		file := bytes.NewReader(fileData)
+		extension := strings.Split(mimeType, "/")[1]
+		w1, err := zipWriter.Create(fileId + extension)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+
+		if _, err := io.Copy(w1, file); err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+	}
+
+	archiveData, err := io.ReadAll(archive)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	ctx.Set("Content-Type", "application/zip")
+	return ctx.Send(archiveData)
 }
