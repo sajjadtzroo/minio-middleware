@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/gofiber/fiber/v2"
@@ -13,7 +14,6 @@ import (
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/instagram_api"
-	"go-uploader/utils"
 	"io"
 	"log"
 	"net/http"
@@ -325,31 +325,25 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 }
 
 func ZipMultipleFiles(ctx *fiber.Ctx) error {
-	var requestData struct {
-		FileIDs []string `json:"fileIds"`
-		BotName string   `json:"botName"`
+	bodyBase64 := ctx.Body()
+	bodyRaw := make([]byte, 0)
+	_, err := base64.StdEncoding.Decode(bodyRaw, bodyBase64)
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
 	}
 
-	if err := json.Unmarshal(ctx.Body(), &requestData); err != nil {
+	var requestData [][]string
+	if err = json.Unmarshal(bodyRaw, &requestData); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
 			Result:  false,
 			Message: err.Error(),
 		})
 	}
 
-	if !slices.Contains(utils.ValidBuckets, requestData.BotName) {
-		return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "BotName is invalid",
-		})
-	}
-
-	botAPI := selectBotAPI(ctx, requestData.BotName)
-
-	hashData := strings.Join(requestData.FileIDs, ",") + requestData.BotName
-	hash := sha256.Sum256([]byte(hashData))
-	archiveName := fmt.Sprintf("%x.zip", hash)
-
+	archiveName := fmt.Sprintf("%x.zip", sha256.Sum256(bodyBase64))
 	zipFile, err := os.Create(archiveName)
 	if err != nil {
 		return ctx.Status(fiber.StatusInternalServerError).JSON(models.GenericResponse{
@@ -364,9 +358,14 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 	zipWriter := zip.NewWriter(zipFile)
 	var wg sync.WaitGroup
 	var zipLock sync.Mutex
-	var errorChan = make(chan error, len(requestData.FileIDs))
+	var errorChan = make(chan error, len(requestData))
 
-	for _, fileID := range requestData.FileIDs {
+	for _, data := range requestData {
+		botName := data[0]
+		fileID := data[1]
+
+		botAPI := selectBotAPI(ctx, botName)
+
 		wg.Add(1)
 		go func(fileID string) {
 			defer wg.Done()
