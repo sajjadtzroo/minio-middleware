@@ -326,8 +326,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 func ZipMultipleFiles(ctx *fiber.Ctx) error {
 	bodyBase64 := ctx.Body()
-	bodyRaw := make([]byte, 0)
-	_, err := base64.StdEncoding.Decode(bodyRaw, bodyBase64)
+	bodyRaw, err := base64.StdEncoding.DecodeString(string(bodyBase64))
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -361,10 +360,16 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 	var errorChan = make(chan error, len(requestData))
 
 	for _, data := range requestData {
+		if len(data) < 2 {
+			return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
+				Result:  false,
+				Message: "data format error",
+			})
+		}
 		botName := data[0]
 		fileID := data[1]
 
-		botAPI := selectBotAPI(ctx, botName)
+		botAPI := selectBotAPI(ctx, strings.ToLower(botName))
 
 		wg.Add(1)
 		go func(fileID string) {
