@@ -325,6 +325,14 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 }
 
 func ZipMultipleFiles(ctx *fiber.Ctx) error {
+	contentType := ctx.Get("Content-Type")
+	if contentType != "text/plain" {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: fmt.Sprintf("Content-Type %s not supported", contentType),
+		})
+	}
+
 	bodyBase64 := ctx.Body()
 	bodyRaw, err := base64.StdEncoding.DecodeString(string(bodyBase64))
 	if err != nil {
