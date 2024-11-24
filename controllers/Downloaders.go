@@ -326,7 +326,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 func ZipMultipleFiles(ctx *fiber.Ctx) error {
 	bodyBase64 := ctx.Body()
-	bodyRaw, err := base64.RawStdEncoding.DecodeString(string(bodyBase64))
+	bodyRaw, err := base64.StdEncoding.DecodeString(string(bodyBase64))
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
