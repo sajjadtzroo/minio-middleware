@@ -240,6 +240,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			minio.PutObjectOptions{},
 		)
 
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: err.Error(),
+			})
+		}
+
 		ctx.Set("Content-Type", mimeType)
 		return ctx.Status(200).Send(responseFileBody)
 	}
@@ -326,6 +333,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		file.Size(),
 		minio.PutObjectOptions{},
 	)
+
+	if err != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
 
 	ctx.Set("Content-Type", mimeType)
 	return ctx.Status(200).Send(bodyRaw)
