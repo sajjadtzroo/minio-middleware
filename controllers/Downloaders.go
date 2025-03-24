@@ -9,8 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/gofiber/fiber/v2"
-	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/instagram_api"
@@ -22,6 +20,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/minio/minio-go/v7"
 )
 
 func DownloadFile(ctx *fiber.Ctx) error {
@@ -263,6 +264,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		requestURL = profilePicUrl
 	} else {
 		requestURL = snitchConfig.Url
+	}
+
+	if requestURL == "" {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "Empty request URL: both profile picture URL and snitch URL are empty",
+		})
 	}
 
 	req, err := http.NewRequestWithContext(instagramReqCtx, "GET", requestURL, nil)

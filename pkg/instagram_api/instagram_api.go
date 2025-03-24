@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -115,6 +116,12 @@ func (h *InstagramApi) GetProfile(username string) (string, error) {
 	res, err := h.getProfileV1(username)
 	if err != nil {
 		return "", err
+	}
+
+	if res.ProfilePicUrlHd == "" {
+		log.Printf("Profile picture URL is empty for user: %s", username)
+		log.Printf("Profile picture URL: %s", res.ProfilePicUrl)
+		return "", errors.New("profile picture URL is empty")
 	}
 
 	return res.ProfilePicUrlHd, nil
