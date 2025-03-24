@@ -118,11 +118,17 @@ func (h *InstagramApi) GetProfile(username string) (string, error) {
 		return "", err
 	}
 
-	if res.ProfilePicUrlHd == "" {
-		log.Printf("Profile picture URL is empty for user: %s", username)
-		log.Printf("Profile picture URL: %s", res.ProfilePicUrl)
-		return "", errors.New("profile picture URL is empty")
+	// First check for HD pic
+	if res.ProfilePicUrlHd != "" {
+		return res.ProfilePicUrlHd, nil
 	}
 
-	return res.ProfilePicUrlHd, nil
+	// If no HD pic, check for regular pic
+	if res.ProfilePicUrl != "" {
+		return res.ProfilePicUrl, nil
+	}
+
+	// Both are empty, return error
+	log.Printf("Both profile picture URLs are empty for user: %s", username)
+	return "", errors.New("profile picture URL is empty")
 }
