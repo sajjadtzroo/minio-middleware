@@ -26,7 +26,7 @@ type GetProfileA1Response struct {
 }
 
 type GetProfileV1Response struct {
-	Pk                       json.Number `json:"pk"`
+	Pk                       any         `json:"pk"`
 	Username                 string      `json:"username"`
 	FullName                 string      `json:"full_name"`
 	IsPrivate                bool        `json:"is_private"`
