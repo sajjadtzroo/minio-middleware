@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"go-uploader/pkg/telegram_api"
+	"log"
 	"path/filepath"
 	"strings"
 
@@ -50,6 +51,7 @@ func TransferFileId(ctx *fiber.Ctx) error {
 
 	sourceFilePath, err := sourceBotAPI.GetFile(req.FileId)
 	if err != nil {
+		log.Printf("Failed to get file id: %s\n -> %v", req.FileId, err.Error())
 		return ctx.Status(500).JSON(fiber.Map{
 			"result":  false,
 			"message": "Failed to GetFilePath",
@@ -58,6 +60,7 @@ func TransferFileId(ctx *fiber.Ctx) error {
 
 	fileData, contentType, err := sourceBotAPI.DownloadFile(sourceFilePath)
 	if err != nil {
+		log.Printf("Failed to download file: %s\n -> %v", sourceFilePath, err.Error())
 		return ctx.Status(500).JSON(fiber.Map{
 			"result":  false,
 			"message": "Failed to Download requested file from path",
@@ -65,9 +68,9 @@ func TransferFileId(ctx *fiber.Ctx) error {
 	}
 
 	fileName := filepath.Base(sourceFilePath)
-
 	finalFileId, err := destBotAPI.UploadFile(contentType, fileName, fileData, req.ChatId)
 	if err != nil {
+		log.Printf("Failed to upload file: %s\n -> %v", fileName, err.Error())
 		return ctx.Status(500).JSON(fiber.Map{
 			"result":  false,
 			"message": "Failed to Upload requested file to destBotApi",
