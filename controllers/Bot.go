@@ -12,6 +12,7 @@ import (
 	"go-uploader/pkg/telegram_api"
 	"go-uploader/utils"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -84,7 +85,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: err.Error(),
+			Message: "Failed to download from botApi.GetFile",
 		})
 	}
 
@@ -94,7 +95,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: err.Error(),
+			Message: "Failed to download from botApi.DownloadFile",
 		})
 	}
 
@@ -166,9 +167,10 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 
 	fileId, err := botApi.UploadFile(contentType, file.Filename, buf.Bytes(), os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
+		log.Printf("Erorr Occured -> %s", err.Error())
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: err.Error(),
+			Message: "Failed to upload to botApi.UploadFile",
 		})
 	}
 
@@ -253,9 +255,10 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 	botApi := selectBotAPI(ctx, botName)
 	fileId, err := botApi.UploadFile(mimeType, fileName, resBody, os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
+		log.Printf("Erorr Occured -> %s", err.Error())
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: err.Error(),
+			Message: "Failed to upload to botApi.UploadFile",
 		})
 	}
 
