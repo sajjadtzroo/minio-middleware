@@ -29,7 +29,7 @@ func New(token string) *TelegramAPI {
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
-		Timeout: 60 * time.Second,
+		Timeout: 300 * time.Second,
 	}
 
 	api := TelegramAPI{
