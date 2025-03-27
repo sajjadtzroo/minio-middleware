@@ -1,6 +1,15 @@
 package main
 
 import (
+	"go-uploader/config"
+	"go-uploader/controllers"
+	"go-uploader/middleware"
+	"go-uploader/pkg/instagram_api"
+	"go-uploader/pkg/telegram_api"
+	"go-uploader/utils"
+	"log"
+	"os"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -10,14 +19,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/idempotency"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
-	"go-uploader/config"
-	"go-uploader/controllers"
-	"go-uploader/middleware"
-	"go-uploader/pkg/instagram_api"
-	"go-uploader/pkg/telegram_api"
-	"go-uploader/utils"
-	"log"
-	"os"
 )
 
 const PORT = "3000"
@@ -79,6 +80,8 @@ func main() {
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
+
+	app.Post("/transfer/telegram", JWTMiddleware, controllers.TransferFileId)
 
 	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
