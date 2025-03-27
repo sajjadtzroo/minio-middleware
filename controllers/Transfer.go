@@ -58,7 +58,8 @@ func TransferFileId(ctx *fiber.Ctx) error {
 		})
 	}
 
-	fileData, contentType, err := sourceBotAPI.DownloadFile(sourceFilePath)
+	splitSourceFilePath := strings.Split(sourceFilePath, req.BotToken)
+	fileData, contentType, err := sourceBotAPI.DownloadFile(splitSourceFilePath[1])
 	if err != nil {
 		log.Printf("Failed to download file: %s\n -> %v", sourceFilePath, err.Error())
 		return ctx.Status(500).JSON(fiber.Map{
