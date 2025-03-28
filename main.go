@@ -81,7 +81,7 @@ func main() {
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
 
-	app.Post("/transfer/telegram", JWTMiddleware, controllers.TransferFileId)
+	app.Post("/transfer/telegram", controllers.TransferFileId)
 
 	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
