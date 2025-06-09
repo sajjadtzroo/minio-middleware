@@ -8,6 +8,8 @@ import (
 	"go-uploader/utils"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -43,10 +45,18 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:           "Go Downloader",
 		ErrorHandler:      utils.CustomErrorHandler,
-		StreamRequestBody: false,
+		StreamRequestBody: true, // Enable streaming for better memory usage
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
 		BodyLimit:         512 * 1024 * 1024, // this is the default limit of 512MB
+		ReadBufferSize:    8192,              // Optimize read buffer size
+		WriteBufferSize:   8192,              // Optimize write buffer size
+		Network:           "tcp",
+		EnablePrintRoutes: false,
+		DisableKeepalive:  false,             // Keep connections alive for better performance
+		ReadTimeout:       60 * time.Second,  // Increased timeout for large files
+		WriteTimeout:      300 * time.Second, // Increased timeout for ZIP creation
+		IdleTimeout:       120 * time.Second,
 	})
 
 	// Middlewares
@@ -56,7 +66,14 @@ func main() {
 	app.Use(idempotency.New())
 	app.Use(helmet.New())
 	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "*", AllowHeaders: "*"}))
-	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
+	// Use moderate compression for better performance balance
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelDefault, // Better performance than LevelBestCompression
+		Next: func(c *fiber.Ctx) bool {
+			// Skip compression for zip endpoints as they're already compressed
+			return strings.HasPrefix(c.Path(), "/zip/")
+		},
+	}))
 
 	JWTMiddleware := middleware.Authentication
 
@@ -71,6 +88,10 @@ func main() {
 	})
 
 	app.Post("/zip/multi", controllers.ZipMultipleFiles)
+	// Alternative high-performance endpoint
+	app.Post("/zip/multi/optimized", controllers.ZipMultipleFilesOptimized)
+	// Performance monitoring endpoint
+	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
 
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
