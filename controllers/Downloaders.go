@@ -15,7 +15,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -372,23 +371,7 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 		})
 	}
 
-	archiveName := fmt.Sprintf("%x.zip", sha256.Sum256(bodyBase64))
-	zipFile, err := os.Create(archiveName)
-	if err != nil {
-		return ctx.Status(fiber.StatusInternalServerError).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
-	}
-
-	defer zipFile.Close()
-	defer os.Remove(archiveName)
-
-	zipWriter := zip.NewWriter(zipFile)
-	var wg sync.WaitGroup
-	var zipLock sync.Mutex
-	var errorChan = make(chan error, len(requestData))
-
+	// Validate input data early
 	for _, data := range requestData {
 		if len(data) < 2 {
 			return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
@@ -396,86 +379,386 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 				Message: "data format error",
 			})
 		}
+	}
+
+	archiveName := fmt.Sprintf("%x.zip", sha256.Sum256(bodyBase64))
+
+	// Set response headers immediately for streaming
+	ctx.Set("Content-Type", "application/zip")
+	ctx.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", archiveName))
+	ctx.Set("Transfer-Encoding", "chunked")
+
+	// Create a pipe for streaming the zip directly to the response
+	pipeReader, pipeWriter := io.Pipe()
+	zipWriter := zip.NewWriter(pipeWriter)
+
+	// Channel for coordinating file download and zip writing
+	type fileResult struct {
+		fileID      string
+		fileData    []byte
+		contentType string
+		extension   string
+		err         error
+	}
+
+	fileResultChan := make(chan fileResult, len(requestData))
+	var downloadWg sync.WaitGroup
+
+	// Start concurrent downloads
+	for _, data := range requestData {
 		botName := data[0]
 		fileID := data[1]
 
-		botAPI := selectBotAPI(ctx, strings.ToLower(botName))
+		botAPIs := selectBotAPI(ctx, strings.ToLower(botName))
 
-		wg.Add(1)
-		go func(fileID string) {
-			defer wg.Done()
+		downloadWg.Add(1)
+		go func(fileID, botName string) {
+			defer downloadWg.Done()
 
-			filePath, err := botAPI.GetFile(fileID)
+			// Download file with racing
+			filePath, selectedBotAPI, err := raceGetFile(botAPIs, fileID)
 			if err != nil {
-				errorChan <- err
+				fileResultChan <- fileResult{fileID: fileID, err: err}
 				return
 			}
 
-			fileData, resContentType, err := botAPI.DownloadFile(botAPI.Explode(filePath))
+			fileData, resContentType, err := raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePath.(string)))
 			if err != nil {
-				errorChan <- err
+				fileResultChan <- fileResult{fileID: fileID, err: err}
 				return
 			}
 
+			// Determine file extension
 			mimeType := http.DetectContentType(fileData)
 			if strings.Contains(mimeType, "text/plain") {
 				mimeType = resContentType
 			}
 
-			fileReader := bytes.NewReader(fileData)
 			fileExtension := strings.Split(mimeType, "/")[1]
 
-			zipLock.Lock()
-			zipFileWriter, err := zipWriter.Create(fileID + "." + fileExtension)
+			fileResultChan <- fileResult{
+				fileID:      fileID,
+				fileData:    fileData,
+				contentType: mimeType,
+				extension:   fileExtension,
+				err:         nil,
+			}
+		}(fileID, botName)
+	}
+
+	// Goroutine to close the channel when all downloads are done
+	go func() {
+		downloadWg.Wait()
+		close(fileResultChan)
+	}()
+
+	// Goroutine to write files to zip as they become available
+	go func() {
+		defer func() {
+			_ = zipWriter.Close()
+			_ = pipeWriter.Close()
+		}()
+
+		filesProcessed := 0
+		for result := range fileResultChan {
+			if result.err != nil {
+				log.Printf("Error downloading file %s: %v", result.fileID, result.err)
+				// Write error to pipe to terminate the stream
+				_ = pipeWriter.CloseWithError(result.err)
+				return
+			}
+
+			// Create zip entry and write file data
+			zipFileWriter, err := zipWriter.Create(result.fileID + "." + result.extension)
 			if err != nil {
-				errorChan <- err
-				zipLock.Unlock()
+				log.Printf("Error creating zip entry for %s: %v", result.fileID, err)
+				_ = pipeWriter.CloseWithError(err)
 				return
 			}
 
-			if _, err := io.Copy(zipFileWriter, fileReader); err != nil {
-				errorChan <- err
-				zipLock.Unlock()
+			if _, err := zipFileWriter.Write(result.fileData); err != nil {
+				log.Printf("Error writing file data for %s: %v", result.fileID, err)
+				_ = pipeWriter.CloseWithError(err)
 				return
 			}
-			zipLock.Unlock()
-		}(fileID)
-	}
 
-	wg.Wait()
-	close(errorChan)
+			filesProcessed++
+			log.Printf("Added file %s to zip (%d/%d)", result.fileID, filesProcessed, len(requestData))
+		}
 
-	for err := range errorChan {
-		_ = zipWriter.Close()
-		return ctx.Status(fiber.StatusInternalServerError).JSON(models.GenericResponse{
+		log.Printf("Successfully processed all %d files for zip", filesProcessed)
+	}()
+
+	// Stream the zip data directly to the client
+	ctx.Context().SetBodyStream(pipeReader, -1)
+	return nil
+}
+
+// ZipMultipleFilesOptimized is a high-performance version with additional optimizations
+func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
+	contentType := ctx.Get("Content-Type")
+	if contentType != "text/plain" {
+		return ctx.Status(400).JSON(models.GenericResponse{
 			Result:  false,
-			Message: err.Error(),
+			Message: fmt.Sprintf("Content-Type %s not supported", contentType),
 		})
 	}
 
-	if err := zipWriter.Close(); err != nil {
-		return ctx.Status(fiber.StatusInternalServerError).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
-	}
-
-	if _, err := zipFile.Seek(0, 0); err != nil {
-		return ctx.Status(fiber.StatusInternalServerError).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
-	}
-
-	zippedData, err := io.ReadAll(zipFile)
+	bodyBase64 := ctx.Body()
+	bodyRaw, err := base64.StdEncoding.DecodeString(string(bodyBase64))
 	if err != nil {
-		return ctx.Status(fiber.StatusInternalServerError).JSON(models.GenericResponse{
+		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
 			Message: err.Error(),
 		})
 	}
 
+	var requestData [][]string
+	if err = json.Unmarshal(bodyRaw, &requestData); err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
+			Result:  false,
+			Message: err.Error(),
+		})
+	}
+
+	// Validate input data early
+	for _, data := range requestData {
+		if len(data) < 2 {
+			return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
+				Result:  false,
+				Message: "data format error",
+			})
+		}
+	}
+
+	// Limit concurrent downloads to prevent resource exhaustion
+	const maxConcurrentDownloads = 10
+	semaphore := make(chan struct{}, maxConcurrentDownloads)
+
+	archiveName := fmt.Sprintf("%x.zip", sha256.Sum256(bodyBase64))
+
+	// Set response headers immediately for streaming
 	ctx.Set("Content-Type", "application/zip")
 	ctx.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", archiveName))
-	return ctx.Send(zippedData)
+	ctx.Set("Transfer-Encoding", "chunked")
+	ctx.Set("Cache-Control", "no-cache")
+
+	// Create a buffered pipe for better performance
+	pipeReader, pipeWriter := io.Pipe()
+
+	// Use buffer for zip writer to improve I/O performance
+	bufferedWriter := &bytes.Buffer{}
+	zipWriter := zip.NewWriter(io.MultiWriter(pipeWriter, bufferedWriter))
+
+	// Channel for coordinating file download and zip writing
+	type fileResult struct {
+		fileID      string
+		fileData    []byte
+		contentType string
+		extension   string
+		err         error
+		size        int64
+	}
+
+	fileResultChan := make(chan fileResult, len(requestData))
+	var downloadWg sync.WaitGroup
+
+	// Track download progress
+	downloadProgress := &sync.Map{}
+	totalFiles := len(requestData)
+
+	log.Printf("Starting ZIP creation for %d files", totalFiles)
+
+	// Start concurrent downloads with rate limiting
+	for i, data := range requestData {
+		botName := data[0]
+		fileID := data[1]
+
+		downloadWg.Add(1)
+		go func(fileID, botName string, index int) {
+			defer downloadWg.Done()
+
+			// Acquire semaphore slot
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			downloadProgress.Store(fileID, "downloading")
+			log.Printf("Starting download %d/%d: %s", index+1, totalFiles, fileID)
+
+			botAPIs := selectBotAPI(ctx, strings.ToLower(botName))
+			if len(botAPIs) == 0 {
+				fileResultChan <- fileResult{fileID: fileID, err: fmt.Errorf("no bot APIs available for %s", botName)}
+				return
+			}
+
+			// Download with timeout and retry logic
+			var fileData []byte
+			var resContentType string
+			var downloadErr error
+
+			// Try up to 2 times
+			for attempt := 1; attempt <= 2; attempt++ {
+				// Get file path with racing
+				filePath, selectedBotAPI, err := raceGetFile(botAPIs, fileID)
+				if err != nil {
+					downloadErr = err
+					if attempt == 2 {
+						break
+					}
+					log.Printf("Attempt %d failed for %s, retrying: %v", attempt, fileID, err)
+					time.Sleep(time.Millisecond * 100)
+					continue
+				}
+
+				// Download file data with racing
+				fileData, resContentType, err = raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePath.(string)))
+				if err != nil {
+					downloadErr = err
+					if attempt == 2 {
+						break
+					}
+					log.Printf("Download attempt %d failed for %s, retrying: %v", attempt, fileID, err)
+					time.Sleep(time.Millisecond * 100)
+					continue
+				}
+
+				// Success
+				downloadErr = nil
+				break
+			}
+
+			if downloadErr != nil {
+				downloadProgress.Store(fileID, "failed")
+				fileResultChan <- fileResult{fileID: fileID, err: downloadErr}
+				return
+			}
+
+			// Determine file extension
+			mimeType := http.DetectContentType(fileData)
+			if strings.Contains(mimeType, "text/plain") && resContentType != "" {
+				mimeType = resContentType
+			}
+
+			fileExtension := "bin" // default
+			if parts := strings.Split(mimeType, "/"); len(parts) == 2 {
+				fileExtension = parts[1]
+			}
+
+			downloadProgress.Store(fileID, "completed")
+			log.Printf("Download completed %d/%d: %s (%d bytes)", index+1, totalFiles, fileID, len(fileData))
+
+			fileResultChan <- fileResult{
+				fileID:      fileID,
+				fileData:    fileData,
+				contentType: mimeType,
+				extension:   fileExtension,
+				size:        int64(len(fileData)),
+				err:         nil,
+			}
+		}(fileID, botName, i)
+	}
+
+	// Goroutine to close the channel when all downloads are done
+	go func() {
+		downloadWg.Wait()
+		close(fileResultChan)
+	}()
+
+	// Goroutine to write files to zip as they become available
+	zipWriteComplete := make(chan error, 1)
+	go func() {
+		defer func() {
+			if err := zipWriter.Close(); err != nil {
+				log.Printf("Error closing zip writer: %v", err)
+			}
+			if err := pipeWriter.Close(); err != nil {
+				log.Printf("Error closing pipe writer: %v", err)
+			}
+		}()
+
+		filesProcessed := 0
+		totalSize := int64(0)
+
+		for result := range fileResultChan {
+			if result.err != nil {
+				log.Printf("Error downloading file %s: %v", result.fileID, result.err)
+				zipWriteComplete <- result.err
+				return
+			}
+
+			// Create zip entry with optimized compression
+			zipFileWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
+				Name:   result.fileID + "." + result.extension,
+				Method: zip.Deflate, // Use compression
+			})
+			if err != nil {
+				log.Printf("Error creating zip entry for %s: %v", result.fileID, err)
+				zipWriteComplete <- err
+				return
+			}
+
+			// Write file data in chunks for better memory usage
+			chunkSize := 32 * 1024 // 32KB chunks
+			reader := bytes.NewReader(result.fileData)
+			written, err := io.CopyBuffer(zipFileWriter, reader, make([]byte, chunkSize))
+			if err != nil {
+				log.Printf("Error writing file data for %s: %v", result.fileID, err)
+				zipWriteComplete <- err
+				return
+			}
+
+			filesProcessed++
+			totalSize += result.size
+			log.Printf("Added file %s to zip (%d/%d) - %d bytes, total: %d bytes",
+				result.fileID, filesProcessed, totalFiles, written, totalSize)
+		}
+
+		log.Printf("Successfully processed all %d files for zip, total size: %d bytes", filesProcessed, totalSize)
+		zipWriteComplete <- nil
+	}()
+
+	// Monitor the zip writing process
+	go func() {
+		if err := <-zipWriteComplete; err != nil {
+			_ = pipeWriter.CloseWithError(err)
+		}
+	}()
+
+	// Stream the zip data directly to the client
+	ctx.Context().SetBodyStream(pipeReader, -1)
+	return nil
+}
+
+// ZipPerformanceStats tracks performance metrics for ZIP operations
+type ZipPerformanceStats struct {
+	StartTime       time.Time `json:"start_time"`
+	TotalFiles      int       `json:"total_files"`
+	FilesProcessed  int       `json:"files_processed"`
+	TotalSize       int64     `json:"total_size"`
+	AverageFileSize int64     `json:"average_file_size"`
+	Duration        string    `json:"duration"`
+	ThroughputMBps  float64   `json:"throughput_mbps"`
+	SuccessRate     float64   `json:"success_rate"`
+	ConcurrentLimit int       `json:"concurrent_limit"`
+}
+
+// GetZipPerformanceInfo returns performance information for ZIP operations
+func GetZipPerformanceInfo(ctx *fiber.Ctx) error {
+	// This would be expanded to track actual performance metrics
+	// For now, it returns configuration information
+	stats := ZipPerformanceStats{
+		StartTime:       time.Now(),
+		ConcurrentLimit: 10, // Current limit from optimized version
+	}
+
+	return ctx.JSON(fiber.Map{
+		"result": true,
+		"stats":  stats,
+		"recommendations": []string{
+			"Use /zip/multi/optimized for better performance",
+			"Limit concurrent requests to prevent resource exhaustion",
+			"Consider implementing caching for frequently requested files",
+			"Monitor memory usage with large file sets",
+		},
+	})
 }

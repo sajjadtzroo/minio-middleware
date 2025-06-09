@@ -5,10 +5,11 @@ import (
 	"go-uploader/controllers"
 	"go-uploader/middleware"
 	"go-uploader/pkg/instagram_api"
-	"go-uploader/pkg/telegram_api"
 	"go-uploader/utils"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -36,20 +37,26 @@ func main() {
 
 	snitchConfiguration := config.NewSnitchConfiguration()
 
-	telegramBot := telegram_api.New(os.Getenv("BOT_TELEGRAM"))
-	instagramBot := telegram_api.New(os.Getenv("BOT_INSTAGRAM"))
-	trackerBot := telegram_api.New(os.Getenv("BOT_TRACKER"))
-	influencerBot := telegram_api.New(os.Getenv("BOT_INFLUENCER"))
+	// Initialize bot scope configuration
+	botScopeConfig := config.NewBotScopeConfiguration()
 
 	instagramApi := instagram_api.New(os.Getenv("INSTAGRAM_API"))
 
 	app := fiber.New(fiber.Config{
 		AppName:           "Go Downloader",
 		ErrorHandler:      utils.CustomErrorHandler,
-		StreamRequestBody: false,
+		StreamRequestBody: true, // Enable streaming for better memory usage
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
 		BodyLimit:         512 * 1024 * 1024, // this is the default limit of 512MB
+		ReadBufferSize:    8192,              // Optimize read buffer size
+		WriteBufferSize:   8192,              // Optimize write buffer size
+		Network:           "tcp",
+		EnablePrintRoutes: false,
+		DisableKeepalive:  false,             // Keep connections alive for better performance
+		ReadTimeout:       60 * time.Second,  // Increased timeout for large files
+		WriteTimeout:      300 * time.Second, // Increased timeout for ZIP creation
+		IdleTimeout:       120 * time.Second,
 	})
 
 	// Middlewares
@@ -59,27 +66,37 @@ func main() {
 	app.Use(idempotency.New())
 	app.Use(helmet.New())
 	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "*", AllowHeaders: "*"}))
-	app.Use(compress.New(compress.Config{Level: compress.LevelBestCompression}))
+	// Use moderate compression for better performance balance
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelDefault, // Better performance than LevelBestCompression
+		Next: func(c *fiber.Ctx) bool {
+			// Skip compression for zip endpoints as they're already compressed
+			return strings.HasPrefix(c.Path(), "/zip/")
+		},
+	}))
 
 	JWTMiddleware := middleware.Authentication
 
 	app.Use(middleware.Attach(&minioClients))
 	app.Use(func(ctx *fiber.Ctx) error {
-		ctx.Locals("BOT_TELEGRAM", telegramBot)
-		ctx.Locals("BOT_INSTAGRAM", instagramBot)
-		ctx.Locals("BOT_TRACKER", trackerBot)
-		ctx.Locals("BOT_INFLUENCER", influencerBot)
-		ctx.Locals("INSTAGRAM_API", instagramApi)
+		// Set the bot scope configuration - contains all bot arrays in hashmap
+		ctx.Locals("BOT_SCOPE_CONFIG", botScopeConfig)
 
+		ctx.Locals("INSTAGRAM_API", instagramApi)
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
 		return ctx.Next()
 	})
 
 	app.Post("/zip/multi", controllers.ZipMultipleFiles)
+	// Alternative high-performance endpoint
+	app.Post("/zip/multi/optimized", controllers.ZipMultipleFilesOptimized)
+	// Performance monitoring endpoint
+	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
 
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
+	app.Post("/upload/telegram/:botName/:specificBot", JWTMiddleware, controllers.UploadToTelegram)
 
 	app.Post("/transfer/telegram", controllers.TransferFileId)
 
@@ -87,9 +104,13 @@ func main() {
 
 	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
+	app.Get("/instant/:botName/:fileId/:specificBot", controllers.DownloadFromTelegram)
 
 	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
 	app.Get("/direct/*", controllers.DownloadFile)
+
+	// Bot scope management
+	app.Get("/bot-scopes", controllers.ListBotScopes)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)
