@@ -29,6 +29,12 @@
 									"type": "file",
 									"src": [],
 									"description": "File to upload"
+								},
+								{
+									"key": "botName",
+									"value": "relic",
+									"description": "Optional: Specific bot name to use (e.g., 'relic', 'backup', 'main')",
+									"type": "text"
 								}
 							]
 						},
@@ -40,11 +46,11 @@
 								{
 									"key": "botName",
 									"value": "telegram",
-									"description": "Bot name (instagram, telegram, tracker, influencer)"
+									"description": "Bot scope (instagram, telegram, tracker, influencer)"
 								}
 							]
 						},
-						"description": "Upload any file to selected telegram bot and return telegram file_id"
+						"description": "Upload any file to selected telegram bot scope. BACKWARD COMPATIBLE: Defaults to 'relic' bot when no specific bot is specified. You can specify which bot to use via 'botName' form field OR use URL path '/upload/telegram/scope/botname'."
 					},
 					"response": []
 				},
@@ -65,7 +71,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"link\": \"https://example.com/file.jpg\"\n}"
+							"raw": "{\n    \"link\": \"https://example.com/file.jpg\",\n    \"botName\": \"relic\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/upload/telegram/link/:botName",
@@ -79,7 +85,7 @@
 								}
 							]
 						},
-						"description": "Upload a file from URL to telegram bot"
+						"description": "Upload a file from URL to telegram bot. Response includes which specific named bot was used for the upload. Server logs show detailed bot racing information including which bot won the race."
 					},
 					"response": []
 				},
@@ -89,14 +95,21 @@
 						"method": "GET",
 						"header": [],
 						"url": {
-							"raw": "{{base_url}}/instant/:botName/:fileId",
+							"raw": "{{base_url}}/instant/:botName/:fileId?bot=relic",
 							"host": ["{{base_url}}"],
 							"path": ["instant", ":botName", ":fileId"],
+							"query": [
+								{
+									"key": "bot",
+									"value": "relic",
+									"description": "Optional: Specific bot name to use for download"
+								}
+							],
 							"variable": [
 								{
 									"key": "botName",
 									"value": "telegram",
-									"description": "Bot name (instagram, telegram, tracker, influencer)"
+									"description": "Bot scope (instagram, telegram, tracker, influencer)"
 								},
 								{
 									"key": "fileId",
@@ -105,7 +118,38 @@
 								}
 							]
 						},
-						"description": "Get a file from bot bucket without extension needing - If not exists, it will download it from telegram"
+						"description": "Get a file from bot bucket without extension needing - If not exists, it will download it from telegram. BACKWARD COMPATIBLE: Defaults to racing mode when no specific bot is specified. You can specify which bot to use via 'bot' query parameter OR use URL path '/instant/scope/fileId/botname'."
+					},
+					"response": []
+				},
+				{
+					"name": "Download File from Specific Bot (URL Param)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/instant/:botName/:fileId/:specificBot",
+							"host": ["{{base_url}}"],
+							"path": ["instant", ":botName", ":fileId", ":specificBot"],
+							"variable": [
+								{
+									"key": "botName",
+									"value": "telegram",
+									"description": "Bot scope (instagram, telegram, tracker, influencer)"
+								},
+								{
+									"key": "fileId",
+									"value": "BAADBAADXwADBREAAWdXAQABFiJ7owABAg",
+									"description": "Telegram file ID"
+								},
+								{
+									"key": "specificBot",
+									"value": "relic",
+									"description": "Specific bot name (relic, backup, main, etc.)"
+								}
+							]
+						},
+						"description": "Download file using a specific named bot specified in the URL path. This is the same endpoint as the basic download but with an additional path parameter. URL parameter takes priority over query parameter. Response includes 'X-Downloaded-By' header showing which bot was used."
 					},
 					"response": []
 				},
@@ -121,14 +165,57 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"fileId\": \"BAADBAADXwADBREAAWdXAQABFiJ7owABAg\",\n    \"chatId\": \"-1001234567890\",\n    \"botToken\": \"1234567890:ABCdefGHIjklMNOpqrsTUVwxyz\",\n    \"botName\": \"telegram\"\n}"
+							"raw": "{\n    \"fileId\": \"BAADBAADXwADBREAAWdXAQABFiJ7owABAg\",\n    \"chatId\": \"-1001234567890\",\n    \"botToken\": \"1234567890:ABCdefGHIjklMNOpqrsTUVwxyz\",\n    \"botName\": \"telegram\",\n    \"preferredBotName\": \"relic\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/transfer/telegram",
 							"host": ["{{base_url}}"],
 							"path": ["transfer", "telegram"]
 						},
-						"description": "Transfer a file from one bot to another using bot token"
+						"description": "Transfer a file from one bot to another using bot token. By default uses 'relic' bot or first available. You can specify which specific bot to use via 'preferredBotName' field. Response includes which bot was used for the transfer."
+					},
+					"response": []
+				},
+				{
+					"name": "Upload File to Specific Bot (URL Param)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"description": "JWT token for authentication"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "File to upload"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/upload/telegram/:botName/:specificBot",
+							"host": ["{{base_url}}"],
+							"path": ["upload", "telegram", ":botName", ":specificBot"],
+							"variable": [
+								{
+									"key": "botName",
+									"value": "telegram",
+									"description": "Bot scope (instagram, telegram, tracker, influencer)"
+								},
+								{
+									"key": "specificBot",
+									"value": "relic",
+									"description": "Specific bot name (relic, backup, main, etc.)"
+								}
+							]
+						},
+						"description": "Upload file using a specific named bot specified in the URL path. This is the same endpoint as the basic upload but with an additional path parameter. URL parameter takes priority over form field."
 					},
 					"response": []
 				}
@@ -312,6 +399,44 @@
 						"description": "Create a ZIP archive containing multiple files from different bots. Body should be base64 encoded JSON array of [botName, fileId] pairs."
 					},
 					"response": []
+				},
+				{
+					"name": "List Bot Scopes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/bot-scopes",
+							"host": ["{{base_url}}"],
+							"path": ["bot-scopes"]
+						},
+						"description": "Get all available bot scopes with their named bots. Environment variables support both formats:\n\n1. Named format: BOT_TELEGRAM=relic<token1>,backup<token2>,main<token3>\n2. Auto-named format: BOT_TELEGRAM=token1,token2,token3 (first becomes 'relic', others get numbered)\n\nShows scope names and bot names configured in .env file."
+					},
+					"response": [
+						{
+							"name": "Success Response",
+							"originalRequest": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{base_url}}/bot-scopes",
+									"host": ["{{base_url}}"],
+									"path": ["bot-scopes"]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": "json",
+							"header": [
+								{
+									"key": "Content-Type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n    \"result\": true,\n    \"scopes\": {\n        \"telegram\": [\"relic\", \"backup\", \"main\"],\n        \"instagram\": [\"primary\"],\n        \"tracker\": [\"relic\", \"secondary\"],\n        \"influencer\": [\"main\", \"backup\", \"emergency\"]\n    }\n}"
+						}
+					]
 				}
 			],
 			"description": "Utility operations for file management"

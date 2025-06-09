@@ -75,6 +75,7 @@ func main() {
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
+	app.Post("/upload/telegram/:botName/:specificBot", JWTMiddleware, controllers.UploadToTelegram)
 
 	app.Post("/transfer/telegram", controllers.TransferFileId)
 
@@ -82,9 +83,13 @@ func main() {
 
 	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
+	app.Get("/instant/:botName/:fileId/:specificBot", controllers.DownloadFromTelegram)
 
 	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
 	app.Get("/direct/*", controllers.DownloadFile)
+
+	// Bot scope management
+	app.Get("/bot-scopes", controllers.ListBotScopes)
 
 	log.Printf("Started server on: %s:%s\n", HOST, PORT)
 	err = app.Listen(HOST + ":" + PORT)

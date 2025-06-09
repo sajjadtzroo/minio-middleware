@@ -1,33 +1,39 @@
 package config
 
 import (
+	"fmt"
 	"go-uploader/pkg/telegram_api"
 	"os"
 	"strings"
 )
 
-// BotScope represents a collection of bots for a specific scope
-type BotScope struct {
+// NamedBot represents a bot with its name and API instance
+type NamedBot struct {
 	Name string
-	Bots []*telegram_api.TelegramAPI
+	API  *telegram_api.TelegramAPI
+}
+
+// BotScope represents a collection of named bots for a specific scope
+type BotScope struct {
+	Name      string
+	NamedBots []NamedBot
 }
 
 // BotScopeConfiguration manages all bot scopes
 type BotScopeConfiguration struct {
-	Scopes map[string][]*telegram_api.TelegramAPI
+	Scopes map[string][]NamedBot
 }
 
 // NewBotScopeConfiguration creates and configures bot scopes
 func NewBotScopeConfiguration() *BotScopeConfiguration {
 	// Parse bot tokens from environment variables (supports comma-separated values)
-	telegramBots := parseBotsFromEnv("BOT_TELEGRAM")
-	instagramBots := parseBotsFromEnv("BOT_INSTAGRAM")
-	trackerBots := parseBotsFromEnv("BOT_TRACKER")
-	influencerBots := parseBotsFromEnv("BOT_INFLUENCER")
+	telegramBots := parseNamedBotsFromEnv("BOT_TELEGRAM", "telegram")
+	instagramBots := parseNamedBotsFromEnv("BOT_INSTAGRAM", "instagram")
+	trackerBots := parseNamedBotsFromEnv("BOT_TRACKER", "tracker")
+	influencerBots := parseNamedBotsFromEnv("BOT_INFLUENCER", "influencer")
 
-	// Configure scopes - if multiple tokens provided, use all of them
-	// If only one token provided, add telegram as fallback (except for telegram scope)
-	scopes := map[string][]*telegram_api.TelegramAPI{
+	// Configure scopes with named bots
+	scopes := map[string][]NamedBot{
 		"telegram":   telegramBots,
 		"instagram":  instagramBots,
 		"tracker":    trackerBots,
@@ -39,52 +45,159 @@ func NewBotScopeConfiguration() *BotScopeConfiguration {
 	}
 }
 
-// parseBotsFromEnv parses comma-separated bot tokens from environment variable
-func parseBotsFromEnv(envKey string) []*telegram_api.TelegramAPI {
-	var bots []*telegram_api.TelegramAPI
-
+// parseNamedBotsFromEnv parses comma-separated bot tokens with names from environment variable
+// Format: name1<token1>,name2<token2>,name3<token3>
+// If no name is provided (just token), defaults to "relic" for first bot and scope_N for others
+func parseNamedBotsFromEnv(envKey, scopeName string) []NamedBot {
 	envValue := os.Getenv(envKey)
 	if envValue == "" {
-		return bots
+		return []NamedBot{}
 	}
 
-	// Split by comma to support multiple tokens
 	tokens := strings.Split(envValue, ",")
-	for _, token := range tokens {
-		token = strings.TrimSpace(token)
-		if token != "" {
-			bot := telegram_api.New(token)
-			bots = append(bots, bot)
+	var namedBots []NamedBot
+
+	for i, entry := range tokens {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			var botName, botToken string
+
+			// Check if entry contains name<token> format
+			if strings.Contains(entry, "<") && strings.Contains(entry, ">") {
+				// Parse name<token> format
+				startIdx := strings.Index(entry, "<")
+				endIdx := strings.LastIndex(entry, ">")
+
+				if startIdx > 0 && endIdx > startIdx {
+					botName = strings.TrimSpace(entry[:startIdx])
+					botToken = strings.TrimSpace(entry[startIdx+1 : endIdx])
+				} else {
+					// Invalid format, skip this entry
+					continue
+				}
+			} else {
+				// No name provided, use default naming
+				botToken = entry
+				if i == 0 {
+					botName = "relic" // First bot is always named "relic"
+				} else {
+					botName = fmt.Sprintf("%s_%d", scopeName, i+1)
+				}
+			}
+
+			if botToken != "" && botName != "" {
+				bot := telegram_api.New(botToken)
+				namedBots = append(namedBots, NamedBot{
+					Name: botName,
+					API:  bot,
+				})
+			}
 		}
 	}
 
-	return bots
+	return namedBots
 }
 
-// GetScope returns the bot array for a specific scope
-func (bsc *BotScopeConfiguration) GetScope(scopeName string) []*telegram_api.TelegramAPI {
-	if bots, exists := bsc.Scopes[scopeName]; exists {
+// GetBots returns the bot APIs for a given scope (for backward compatibility)
+func (bsc *BotScopeConfiguration) GetBots(scope string) []*telegram_api.TelegramAPI {
+	if namedBots, exists := bsc.Scopes[scope]; exists && len(namedBots) > 0 {
+		bots := make([]*telegram_api.TelegramAPI, len(namedBots))
+		for i, namedBot := range namedBots {
+			bots[i] = namedBot.API
+		}
 		return bots
 	}
-	return nil
+	return []*telegram_api.TelegramAPI{}
 }
 
-// AddBotToScope adds a bot to a specific scope
-func (bsc *BotScopeConfiguration) AddBotToScope(scopeName string, bot *telegram_api.TelegramAPI) {
-	if bsc.Scopes[scopeName] == nil {
-		bsc.Scopes[scopeName] = []*telegram_api.TelegramAPI{}
+// GetNamedBots returns the named bots for a given scope
+func (bsc *BotScopeConfiguration) GetNamedBots(scope string) []NamedBot {
+	if namedBots, exists := bsc.Scopes[scope]; exists {
+		return namedBots
 	}
-	bsc.Scopes[scopeName] = append(bsc.Scopes[scopeName], bot)
+	return []NamedBot{}
 }
 
-// CreateCustomScope creates a new scope with specified bots
+// GetScope returns the bot array for a specific scope (for backward compatibility)
+func (bsc *BotScopeConfiguration) GetScope(scopeName string) []*telegram_api.TelegramAPI {
+	return bsc.GetBots(scopeName)
+}
+
+// AddBotToScope adds a named bot to a specific scope
+func (bsc *BotScopeConfiguration) AddBotToScope(scopeName string, botName string, bot *telegram_api.TelegramAPI) {
+	if bsc.Scopes[scopeName] == nil {
+		bsc.Scopes[scopeName] = []NamedBot{}
+	}
+	namedBot := NamedBot{Name: botName, API: bot}
+	bsc.Scopes[scopeName] = append(bsc.Scopes[scopeName], namedBot)
+}
+
+// CreateCustomScope creates a new scope with specified tokens and names
+// Supports both name<token> format and plain tokens
 func (bsc *BotScopeConfiguration) CreateCustomScope(scopeName string, tokens []string) {
-	var bots []*telegram_api.TelegramAPI
-	for _, token := range tokens {
-		if strings.TrimSpace(token) != "" {
-			bot := telegram_api.New(strings.TrimSpace(token))
-			bots = append(bots, bot)
+	var namedBots []NamedBot
+	for i, entry := range tokens {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			var botName, botToken string
+
+			// Check if entry contains name<token> format
+			if strings.Contains(entry, "<") && strings.Contains(entry, ">") {
+				// Parse name<token> format
+				startIdx := strings.Index(entry, "<")
+				endIdx := strings.LastIndex(entry, ">")
+
+				if startIdx > 0 && endIdx > startIdx {
+					botName = strings.TrimSpace(entry[:startIdx])
+					botToken = strings.TrimSpace(entry[startIdx+1 : endIdx])
+				} else {
+					// Invalid format, skip this entry
+					continue
+				}
+			} else {
+				// No name provided, use default naming
+				botToken = entry
+				if i == 0 {
+					botName = "relic" // First bot is always named "relic"
+				} else {
+					botName = fmt.Sprintf("%s_%d", scopeName, i+1)
+				}
+			}
+
+			if botToken != "" && botName != "" {
+				bot := telegram_api.New(botToken)
+				namedBots = append(namedBots, NamedBot{
+					Name: botName,
+					API:  bot,
+				})
+			}
 		}
 	}
-	bsc.Scopes[scopeName] = bots
+	bsc.Scopes[scopeName] = namedBots
+}
+
+// GetAllScopes returns all available scope names
+func (bsc *BotScopeConfiguration) GetAllScopes() []string {
+	scopes := make([]string, 0, len(bsc.Scopes))
+	for scope, namedBots := range bsc.Scopes {
+		if len(namedBots) > 0 {
+			scopes = append(scopes, scope)
+		}
+	}
+	return scopes
+}
+
+// GetAllScopeDetails returns detailed information about all scopes
+func (bsc *BotScopeConfiguration) GetAllScopeDetails() map[string][]string {
+	scopeDetails := make(map[string][]string)
+	for scope, namedBots := range bsc.Scopes {
+		if len(namedBots) > 0 {
+			botNames := make([]string, len(namedBots))
+			for i, namedBot := range namedBots {
+				botNames[i] = namedBot.Name
+			}
+			scopeDetails[scope] = botNames
+		}
+	}
+	return scopeDetails
 }

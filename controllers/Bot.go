@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/telegram_api"
@@ -43,6 +44,19 @@ func logBotAPIs(botApis []*telegram_api.TelegramAPI, scope string) {
 	}
 }
 
+// logNamedBots logs named bot information in a safe and readable format
+func logNamedBots(namedBots []config.NamedBot, scope string) {
+	if len(namedBots) == 0 {
+		log.Printf("No Named Bots found for scope: %s", scope)
+		return
+	}
+
+	log.Printf("Selected %d Named Bots for scope '%s':", len(namedBots), scope)
+	for i, namedBot := range namedBots {
+		log.Printf("  [%d] %s (%s)", i+1, namedBot.Name, namedBot.API.String())
+	}
+}
+
 func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	ctx.SetUserContext(context.Background())
 
@@ -61,6 +75,10 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 			Message: "file id is empty",
 		})
 	}
+
+	// Get optional specific bot name from URL parameter or query param
+	specificBotFromURL := ctx.Params("specificBot", "")
+	specificBotFromQuery := ctx.Query("bot", "")
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
 	// objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), botName, minio.ListObjectsOptions{
@@ -88,25 +106,69 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	// }
 
 	log.Printf("Downloading from Telegram: %s", fileId)
-	botApis := selectBotAPI(ctx, botName)
-	logBotAPIs(botApis, botName)
-	filePath, selectedBotApi, err := raceGetFile(botApis, fileId)
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "Failed to download from raceGetFile",
-		})
+
+	// Get named bots for bot selection
+	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	namedBots := botScopeConfig.GetNamedBots(botName)
+	logNamedBots(namedBots, botName)
+
+	// Determine preferred bot name (priority: URL param > query param > racing mode)
+	preferredBotName := ""
+	useRacing := true
+
+	// First check URL parameter (highest priority)
+	if specificBotFromURL != "" {
+		preferredBotName = specificBotFromURL
+		useRacing = false
+		log.Printf("🎯 Requested specific bot from URL: '%s'", preferredBotName)
+	} else if specificBotFromQuery != "" {
+		// Then check query parameter
+		preferredBotName = specificBotFromQuery
+		useRacing = false
+		log.Printf("🎯 Requested specific bot from query: '%s'", preferredBotName)
+	} else {
+		log.Printf("🏁 No specific bot requested, using racing mode")
 	}
 
-	filePathString := selectedBotApi.Explode(filePath.(string))
-	fileData, resContentType, err := raceDownloadFile(botApis, filePathString)
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "Failed to download from raceDownloadFile",
-		})
+	var fileData []byte
+	var resContentType string
+	var usedBotName string
+	var downloadBotName string
+	var err error
+
+	if useRacing {
+		// Use racing mode (existing behavior)
+		filePath, selectedBotApi, winningBotName, err := raceGetFileWithNames(namedBots, fileId)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: "Failed to download from raceGetFileWithNames",
+			})
+		}
+
+		filePathString := selectedBotApi.Explode(filePath.(string))
+
+		fileData, resContentType, downloadBotName, err = raceDownloadFileWithNames(namedBots, filePathString)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: "Failed to download from raceDownloadFileWithNames",
+			})
+		}
+
+		usedBotName = fmt.Sprintf("GetFile:%s|Download:%s", winningBotName, downloadBotName)
+		log.Printf("✅ Complete download chain: GetFile by '%s' → DownloadFile by '%s' for FileID: %s", winningBotName, downloadBotName, fileId)
+	} else {
+		// Use specific bot
+		fileData, resContentType, usedBotName, err = downloadFileWithSpecificBot(namedBots, preferredBotName, fileId)
+		if err != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: "Failed to download with specific bot",
+			})
+		}
 	}
-	log.Printf("Downloaded from Telegram: %s", fileId)
+
 	mimeType := http.DetectContentType(fileData)
 	if strings.Contains(mimeType, "text/plain") {
 		mimeType = resContentType
@@ -132,6 +194,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	log.Printf("Uploaded to MinIO: %s", fileId)
 	ctx.Set("X-Serve", "Telegram")
 	ctx.Set("Content-Type", mimeType)
+	ctx.Set("X-Downloaded-By", usedBotName)
 	return ctx.Send(fileData)
 }
 
@@ -145,6 +208,9 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 			Message: "bot name is not valid",
 		})
 	}
+
+	// Get optional specific bot name from URL parameter (for backward compatibility)
+	specificBotFromURL := ctx.Params("specificBot", "")
 
 	form, err := ctx.MultipartForm()
 	if err != nil {
@@ -171,21 +237,41 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 		})
 	}
 
-	botApis := selectBotAPI(ctx, botName)
+	// Get named bots for specific bot selection
+	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	namedBots := botScopeConfig.GetNamedBots(botName)
+	logNamedBots(namedBots, botName)
+
+	// Determine preferred bot name (priority: URL param > form field > default to "relic")
+	preferredBotName := ""
+
+	// First check URL parameter (highest priority)
+	if specificBotFromURL != "" {
+		preferredBotName = specificBotFromURL
+		log.Printf("🎯 Requested specific bot from URL: '%s'", preferredBotName)
+	} else if form.Value["botName"] != nil && len(form.Value["botName"]) > 0 {
+		// Then check form field
+		preferredBotName = form.Value["botName"][0]
+		log.Printf("🎯 Requested specific bot from form: '%s'", preferredBotName)
+	}
+	// If neither provided, preferredBotName stays empty and defaults to "relic"
+
 	contentType := http.DetectContentType(buf.Bytes())
 
-	fileId, err := raceUploadFile(botApis, contentType, file.Filename, buf.Bytes(), os.Getenv("DEST_CHAT_ID"))
+	// Use specific bot for upload (defaults to "relic" or first bot if preferredBotName is empty)
+	fileId, usedBotName, err := uploadFileWithSpecificBot(namedBots, preferredBotName, contentType, file.Filename, buf.Bytes(), os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
-		log.Printf("Erorr Occured -> %s", err.Error())
+		log.Printf("Error Occurred -> %s", err.Error())
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: "Failed to upload to raceUploadFile",
+			Message: "Failed to upload with specific bot",
 		})
 	}
 
 	return ctx.Status(200).JSON(fiber.Map{
-		"result": true,
-		"fileId": fileId,
+		"result":     true,
+		"fileId":     fileId,
+		"uploadedBy": usedBotName,
 	})
 }
 
@@ -261,19 +347,51 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 
 	mimeType := http.DetectContentType(resBody)
 
-	botApis := selectBotAPI(ctx, botName)
-	fileId, err := raceUploadFile(botApis, mimeType, fileName, resBody, os.Getenv("DEST_CHAT_ID"))
+	// Get named bots for specific bot selection
+	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	namedBots := botScopeConfig.GetNamedBots(botName)
+	logNamedBots(namedBots, botName)
+
+	// Check if specific bot name is provided in request body
+	preferredBotName := ""
+	if botNameFromBody, exists := body["botName"]; exists && botNameFromBody != "" {
+		preferredBotName = botNameFromBody
+		log.Printf("🎯 Requested specific bot from body: '%s'", preferredBotName)
+	}
+
+	// Use specific bot for upload (defaults to "relic" or first bot)
+	fileId, usedBotName, err := uploadFileWithSpecificBot(namedBots, preferredBotName, mimeType, fileName, resBody, os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
-		log.Printf("Erorr Occured -> %s", err.Error())
+		log.Printf("Error Occurred -> %s", err.Error())
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: "Failed to upload to raceUploadFile",
+			Message: "Failed to upload with specific bot",
 		})
 	}
 
 	return ctx.Status(200).JSON(fiber.Map{
-		"result": true,
-		"fileId": fileId,
+		"result":     true,
+		"fileId":     fileId,
+		"uploadedBy": usedBotName,
 	})
 
+}
+
+// ListBotScopes returns all available bot scopes with their named bots
+func ListBotScopes(ctx *fiber.Ctx) error {
+	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG")
+	if botScopeConfig == nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "Bot scope configuration not found",
+		})
+	}
+
+	config := botScopeConfig.(*config.BotScopeConfiguration)
+	scopeDetails := config.GetAllScopeDetails()
+
+	return ctx.Status(200).JSON(fiber.Map{
+		"result": true,
+		"scopes": scopeDetails,
+	})
 }
