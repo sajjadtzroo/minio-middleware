@@ -46,7 +46,7 @@ func TransferFileId(ctx *fiber.Ctx) error {
 		})
 	}
 
-	destBotAPI := selectBotAPI(ctx, strings.ToLower(req.BotName))
+	destBotAPIs := selectBotAPI(ctx, strings.ToLower(req.BotName))
 	sourceBotAPI := telegram_api.New(req.BotToken)
 
 	sourceFilePath, err := sourceBotAPI.GetFile(req.FileId)
@@ -69,7 +69,7 @@ func TransferFileId(ctx *fiber.Ctx) error {
 	}
 
 	fileName := filepath.Base(sourceFilePath)
-	finalFileId, err := destBotAPI.UploadFile(contentType, fileName, fileData, req.ChatId)
+	finalFileId, err := raceUploadFile(destBotAPIs, contentType, fileName, fileData, req.ChatId)
 	if err != nil {
 		log.Printf("Failed to upload file: %s\n -> %v", fileName, err.Error())
 		return ctx.Status(500).JSON(fiber.Map{

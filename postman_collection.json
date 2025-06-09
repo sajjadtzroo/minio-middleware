@@ -1,0 +1,352 @@
+{
+	"info": {
+		"_postman_id": "minio-middleware-api",
+		"name": "MinIO Middleware API",
+		"description": "Complete API collection for the MinIO Middleware uploader service written in Go. This service provides file upload/download capabilities through Telegram bots and direct storage.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "minio-middleware"
+	},
+	"item": [
+		{
+			"name": "Telegram Bot Operations",
+			"item": [
+				{
+					"name": "Upload File to Telegram Bot",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"description": "JWT token for authentication"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "File to upload"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/upload/telegram/:botName",
+							"host": ["{{base_url}}"],
+							"path": ["upload", "telegram", ":botName"],
+							"variable": [
+								{
+									"key": "botName",
+									"value": "telegram",
+									"description": "Bot name (instagram, telegram, tracker, influencer)"
+								}
+							]
+						},
+						"description": "Upload any file to selected telegram bot and return telegram file_id"
+					},
+					"response": []
+				},
+				{
+					"name": "Upload File to Telegram Bot via Link",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"description": "JWT token for authentication"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"link\": \"https://example.com/file.jpg\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/upload/telegram/link/:botName",
+							"host": ["{{base_url}}"],
+							"path": ["upload", "telegram", "link", ":botName"],
+							"variable": [
+								{
+									"key": "botName",
+									"value": "telegram",
+									"description": "Bot name (instagram, telegram, tracker, influencer)"
+								}
+							]
+						},
+						"description": "Upload a file from URL to telegram bot"
+					},
+					"response": []
+				},
+				{
+					"name": "Download File from Telegram Bot",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/instant/:botName/:fileId",
+							"host": ["{{base_url}}"],
+							"path": ["instant", ":botName", ":fileId"],
+							"variable": [
+								{
+									"key": "botName",
+									"value": "telegram",
+									"description": "Bot name (instagram, telegram, tracker, influencer)"
+								},
+								{
+									"key": "fileId",
+									"value": "BAADBAADXwADBREAAWdXAQABFiJ7owABAg",
+									"description": "Telegram file ID"
+								}
+							]
+						},
+						"description": "Get a file from bot bucket without extension needing - If not exists, it will download it from telegram"
+					},
+					"response": []
+				},
+				{
+					"name": "Transfer File Between Bots",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"fileId\": \"BAADBAADXwADBREAAWdXAQABFiJ7owABAg\",\n    \"chatId\": \"-1001234567890\",\n    \"botToken\": \"1234567890:ABCdefGHIjklMNOpqrsTUVwxyz\",\n    \"botName\": \"telegram\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/transfer/telegram",
+							"host": ["{{base_url}}"],
+							"path": ["transfer", "telegram"]
+						},
+						"description": "Transfer a file from one bot to another using bot token"
+					},
+					"response": []
+				}
+			],
+			"description": "Operations related to Telegram bot file management"
+		},
+		{
+			"name": "Direct Storage Operations",
+			"item": [
+				{
+					"name": "Upload File to Direct Storage",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{jwt_token}}",
+								"description": "JWT token for authentication"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "file",
+									"type": "file",
+									"src": [],
+									"description": "File to upload"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/direct/:bucketName",
+							"host": ["{{base_url}}"],
+							"path": ["direct", ":bucketName"],
+							"variable": [
+								{
+									"key": "bucketName",
+									"value": "instagram",
+									"description": "Bucket name (instagram, telegram, tracker, influencer)"
+								}
+							]
+						},
+						"description": "Upload a file to specific bucket in direct storage"
+					},
+					"response": []
+				},
+				{
+					"name": "Download File from Direct Storage",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/direct/:bucketName/:path",
+							"host": ["{{base_url}}"],
+							"path": ["direct", ":bucketName", ":path"],
+							"variable": [
+								{
+									"key": "bucketName",
+									"value": "instagram",
+									"description": "Bucket name"
+								},
+								{
+									"key": "path",
+									"value": "filename.jpg",
+									"description": "File path in bucket"
+								}
+							]
+						},
+						"description": "Get a file from specific bucket in direct storage"
+					},
+					"response": []
+				},
+				{
+					"name": "Upload from Link to Storage",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"link\": \"https://example.com/image.jpg\",\n    \"bucket\": \"instagram\",\n    \"fileName\": \"my-image\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/instant/link",
+							"host": ["{{base_url}}"],
+							"path": ["instant", "link"]
+						},
+						"description": "Upload a URL to a bucket from a link. FileName as fileName, Bucket as bucketName"
+					},
+					"response": []
+				}
+			],
+			"description": "Direct storage operations for file management"
+		},
+		{
+			"name": "Profile Operations",
+			"item": [
+				{
+					"name": "Download Instagram Profile Picture",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/profile/instagram/:pk/:userName",
+							"host": ["{{base_url}}"],
+							"path": ["profile", "instagram", ":pk", ":userName"],
+							"variable": [
+								{
+									"key": "pk",
+									"value": "123456789",
+									"description": "Profile primary key/ID"
+								},
+								{
+									"key": "userName",
+									"value": "username",
+									"description": "Instagram username"
+								}
+							]
+						},
+						"description": "Get Instagram profile picture"
+					},
+					"response": []
+				},
+				{
+					"name": "Download Telegram Profile Picture",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/profile/telegram/:pk/:userName",
+							"host": ["{{base_url}}"],
+							"path": ["profile", "telegram", ":pk", ":userName"],
+							"variable": [
+								{
+									"key": "pk",
+									"value": "123456789",
+									"description": "Profile primary key/ID"
+								},
+								{
+									"key": "userName",
+									"value": "@channelname",
+									"description": "Telegram channel/username (use @ for public channels)"
+								}
+							]
+						},
+						"description": "Get Telegram profile picture. If Telegram Public channel use @ at first of them"
+					},
+					"response": []
+				}
+			],
+			"description": "Social media profile picture operations"
+		},
+		{
+			"name": "Utility Operations",
+			"item": [
+				{
+					"name": "Zip Multiple Files",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "text/plain"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "W1sidGVsZWdyYW0iLCJCQUFEQkFBRFh3QURCRUVBQVDXAQABF2J7b3dBQkFnIl0sWyJpbnN0YWdyYW0iLCJCQUFEQkFBRFl3QURCRUVBQVDXAQABF2J7b3dBQkFnIl1d",
+							"description": "Base64 encoded JSON array of [botName, fileId] pairs"
+						},
+						"url": {
+							"raw": "{{base_url}}/zip/multi",
+							"host": ["{{base_url}}"],
+							"path": ["zip", "multi"]
+						},
+						"description": "Create a ZIP archive containing multiple files from different bots. Body should be base64 encoded JSON array of [botName, fileId] pairs."
+					},
+					"response": []
+				}
+			],
+			"description": "Utility operations for file management"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"description": "Base URL for the API server"
+		},
+		{
+			"key": "jwt_token",
+			"value": "your_jwt_token_here",
+			"description": "JWT token for authenticated endpoints"
+		}
+	]
+} 

@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"github.com/gofiber/fiber/v2"
-	"github.com/minio/minio-go/v7"
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/telegram_api"
@@ -19,20 +17,29 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/minio/minio-go/v7"
 )
 
-func selectBotAPI(ctx *fiber.Ctx, botName string) *telegram_api.TelegramAPI {
-	switch botName {
-	case "instagram":
-		return ctx.Locals("BOT_INSTAGRAM").(*telegram_api.TelegramAPI)
-	case "telegram":
-		return ctx.Locals("BOT_TELEGRAM").(*telegram_api.TelegramAPI)
-	case "tracker":
-		return ctx.Locals("BOT_TRACKER").(*telegram_api.TelegramAPI)
-	case "influencer":
-		return ctx.Locals("BOT_INFLUENCER").(*telegram_api.TelegramAPI)
-	default:
-		return nil
+func selectBotAPI(ctx *fiber.Ctx, botName string) []*telegram_api.TelegramAPI {
+	if botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG"); botScopeConfig != nil {
+		config := botScopeConfig.(*config.BotScopeConfiguration)
+		return config.GetScope(botName)
+	}
+	return nil
+}
+
+// logBotAPIs logs bot API information in a safe and readable format
+func logBotAPIs(botApis []*telegram_api.TelegramAPI, scope string) {
+	if len(botApis) == 0 {
+		log.Printf("No Bot APIs found for scope: %s", scope)
+		return
+	}
+
+	log.Printf("Selected %d Bot APIs for scope '%s':", len(botApis), scope)
+	for i, bot := range botApis {
+		log.Printf("  [%d] %s", i+1, bot.String())
 	}
 }
 
@@ -56,55 +63,57 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	}
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
-	objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), botName, minio.ListObjectsOptions{
-		Prefix:    fileId,
-		Recursive: true,
-		UseV1:     true,
-	})
+	// objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), botName, minio.ListObjectsOptions{
+	// 	Prefix:    fileId,
+	// 	Recursive: true,
+	// 	UseV1:     true,
+	// })
 
-	for info := range objectInfo {
-		if info.Size > 0 {
-			object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), botName, info.Key, minio.GetObjectOptions{})
-			if err != nil {
-				return ctx.Status(500).JSON(models.GenericResponse{
-					Result:  false,
-					Message: err.Error(),
-				})
-			}
+	// for info := range objectInfo {
+	// 	if info.Size > 0 {
+	// 		object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), botName, info.Key, minio.GetObjectOptions{})
+	// 		if err != nil {
+	// 			return ctx.Status(500).JSON(models.GenericResponse{
+	// 				Result:  false,
+	// 				Message: err.Error(),
+	// 			})
+	// 		}
 
-			data, _ := io.ReadAll(object)
-			ctx.Set("Content-Type", http.DetectContentType(data))
-			ctx.Set("X-Serve", "Cache")
-			_ = object.Close()
-			return ctx.Status(200).Send(data)
-		}
-	}
+	// 		data, _ := io.ReadAll(object)
+	// 		ctx.Set("Content-Type", http.DetectContentType(data))
+	// 		ctx.Set("X-Serve", "Cache")
+	// 		_ = object.Close()
+	// 		return ctx.Status(200).Send(data)
+	// 	}
+	// }
 
-	botApi := selectBotAPI(ctx, botName)
-	filePath, err := botApi.GetFile(fileId)
+	log.Printf("Downloading from Telegram: %s", fileId)
+	botApis := selectBotAPI(ctx, botName)
+	logBotAPIs(botApis, botName)
+	filePath, selectedBotApi, err := raceGetFile(botApis, fileId)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: "Failed to download from botApi.GetFile",
+			Message: "Failed to download from raceGetFile",
 		})
 	}
 
-	filePathString := botApi.Explode(filePath)
-
-	fileData, resContentType, err := botApi.DownloadFile(filePathString)
+	filePathString := selectedBotApi.Explode(filePath.(string))
+	fileData, resContentType, err := raceDownloadFile(botApis, filePathString)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: "Failed to download from botApi.DownloadFile",
+			Message: "Failed to download from raceDownloadFile",
 		})
 	}
-
+	log.Printf("Downloaded from Telegram: %s", fileId)
 	mimeType := http.DetectContentType(fileData)
 	if strings.Contains(mimeType, "text/plain") {
 		mimeType = resContentType
 	}
 
 	file := bytes.NewReader(fileData)
+	log.Printf("Uploading to MinIO: %s", fileId)
 	_, err = minioClient.Storage.Conn().PutObject(
 		ctx.UserContext(),
 		botName,
@@ -120,7 +129,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 			Message: err.Error(),
 		})
 	}
-
+	log.Printf("Uploaded to MinIO: %s", fileId)
 	ctx.Set("X-Serve", "Telegram")
 	ctx.Set("Content-Type", mimeType)
 	return ctx.Send(fileData)
@@ -162,15 +171,15 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 		})
 	}
 
-	botApi := selectBotAPI(ctx, botName)
+	botApis := selectBotAPI(ctx, botName)
 	contentType := http.DetectContentType(buf.Bytes())
 
-	fileId, err := botApi.UploadFile(contentType, file.Filename, buf.Bytes(), os.Getenv("DEST_CHAT_ID"))
+	fileId, err := raceUploadFile(botApis, contentType, file.Filename, buf.Bytes(), os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
 		log.Printf("Erorr Occured -> %s", err.Error())
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: "Failed to upload to botApi.UploadFile",
+			Message: "Failed to upload to raceUploadFile",
 		})
 	}
 
@@ -252,13 +261,13 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 
 	mimeType := http.DetectContentType(resBody)
 
-	botApi := selectBotAPI(ctx, botName)
-	fileId, err := botApi.UploadFile(mimeType, fileName, resBody, os.Getenv("DEST_CHAT_ID"))
+	botApis := selectBotAPI(ctx, botName)
+	fileId, err := raceUploadFile(botApis, mimeType, fileName, resBody, os.Getenv("DEST_CHAT_ID"))
 	if err != nil {
 		log.Printf("Erorr Occured -> %s", err.Error())
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
-			Message: "Failed to upload to botApi.UploadFile",
+			Message: "Failed to upload to raceUploadFile",
 		})
 	}
 

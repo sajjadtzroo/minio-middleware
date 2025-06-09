@@ -399,19 +399,19 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 		botName := data[0]
 		fileID := data[1]
 
-		botAPI := selectBotAPI(ctx, strings.ToLower(botName))
+		botAPIs := selectBotAPI(ctx, strings.ToLower(botName))
 
 		wg.Add(1)
 		go func(fileID string) {
 			defer wg.Done()
 
-			filePath, err := botAPI.GetFile(fileID)
+			filePath, selectedBotAPI, err := raceGetFile(botAPIs, fileID)
 			if err != nil {
 				errorChan <- err
 				return
 			}
 
-			fileData, resContentType, err := botAPI.DownloadFile(botAPI.Explode(filePath))
+			fileData, resContentType, err := raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePath.(string)))
 			if err != nil {
 				errorChan <- err
 				return

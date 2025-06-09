@@ -40,6 +40,14 @@ func New(token string) *TelegramAPI {
 	return &api
 }
 
+// String returns a safe string representation for logging
+func (h *TelegramAPI) String() string {
+	if len(h.token) > 10 {
+		return fmt.Sprintf("TelegramAPI{token: %s...}", h.token[:10])
+	}
+	return "TelegramAPI{token: ***}"
+}
+
 type GetFileResponse struct {
 	Result struct {
 		FilePath string `json:"file_path"`
