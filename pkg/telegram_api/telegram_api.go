@@ -91,18 +91,9 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
     cleanPath := strings.TrimPrefix(filePath, "/")
 
-    var reqURL string
-
-    // تشخیص پروکسی یا API اصلی
-    if strings.HasPrefix(BaseUrl, "http://94.130.99.214") || strings.Contains(BaseUrl, "statics.trendbot.net") {
-        // برای پروکسی شما - بدون "bot"
-        reqURL = BaseUrl + "/file/" + h.token + "/" + cleanPath
-        log.Printf("📥 Using proxy format: %s", reqURL)
-    } else {
-        // برای API اصلی تلگرام - با "bot"
-        reqURL = BaseUrl + "/file/bot" + h.token + "/" + cleanPath
-        log.Printf("📥 Using official API format: %s", reqURL)
-    }
+    // برای پروکسی شما - بدون "bot" prefix
+    reqURL := BaseUrl + "/file/" + h.token + "/" + cleanPath
+    log.Printf("📥 Downloading from: %s", reqURL)
 
     response, err := h.client.Get(reqURL)
     if err != nil {
@@ -115,36 +106,34 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
         return nil, "", fmt.Errorf("failed to read response: %w", err)
     }
 
-    if response.StatusCode == 200 {
-        resContentType := response.Header.Get("Content-Type")
-        log.Printf("✅ Downloaded %d bytes (type: %s)", len(resBody), resContentType)
-        return resBody, resContentType, nil
-    }
+    if response.StatusCode != 200 {
+        // اگه proxy فیل شد، API اصلی رو امتحان کن
+        if response.StatusCode == 404 {
+            log.Printf("⚠️ Proxy returned 404, trying official API...")
 
-    // اگه 404 شد، با فرمت دیگه امتحان کن
-    if response.StatusCode == 404 {
-        log.Printf("⚠️ Got 404, trying alternative format...")
-
-        // اگه با proxy بود، official رو امتحان کن
-        if strings.Contains(reqURL, "94.130.99.214") {
-            alternativeURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
-            log.Printf("📥 Trying official API: %s", alternativeURL)
-        } else {
-            // اگه official بود، proxy رو امتحان کن (اگه داریم)
-            alternativeURL := "http://94.130.99.214/file/" + h.token + "/" + cleanPath
-            log.Printf("📥 Trying proxy: %s", alternativeURL)
-        }
-
-        response2, err := h.client.Get(alternativeURL)
-        if err == nil && response2.StatusCode == 200 {
+            // API اصلی تلگرام نیاز به "bot" داره
+            officialURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
+            response2, err := h.client.Get(officialURL)
+            if err != nil {
+                return nil, "", fmt.Errorf("official API request failed: %w", err)
+            }
             defer response2.Body.Close()
+
             resBody2, _ := io.ReadAll(response2.Body)
-            log.Printf("✅ Alternative method successful!")
-            return resBody2, response2.Header.Get("Content-Type"), nil
+            if response2.StatusCode == 200 {
+                log.Printf("✅ Downloaded from official API")
+                return resBody2, response2.Header.Get("Content-Type"), nil
+            }
+
+            return nil, "", fmt.Errorf("both proxy and official API failed")
         }
+
+        return nil, "", fmt.Errorf("download failed (status %d)", response.StatusCode)
     }
 
-    return nil, "", fmt.Errorf("download failed (status %d)", response.StatusCode)
+    resContentType := response.Header.Get("Content-Type")
+    log.Printf("✅ Downloaded %d bytes (type: %s)", len(resBody), resContentType)
+    return resBody, resContentType, nil
 }
 
 func (h *TelegramAPI) Explode(filePath interface{}) string {
