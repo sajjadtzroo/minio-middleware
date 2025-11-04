@@ -60,82 +60,37 @@ func logNamedBots(namedBots []config.NamedBot, scope string) {
 
 // determineFileExtension determines the correct file extension based on content
 func determineFileExtension(data []byte, contentType string, fileId string) string {
-	// Map of Telegram file ID patterns to extensions
-	// Photos usually start with "AgAC"
-	// Documents usually start with "BAAD" or "BQA"
-	// Videos usually start with "BAAC"
-
 	mimeType := http.DetectContentType(data)
 
-	// If content type from Telegram is more specific, use it
+	// اگه content type از تلگرام دقیق‌تره، استفاده کن
 	if contentType != "" && !strings.Contains(contentType, "octet-stream") {
 		mimeType = contentType
 	}
 
-	// Special handling for images
-	if strings.HasPrefix(fileId, "AgAC") {
-		// This is likely a photo
-		if strings.Contains(mimeType, "webp") {
-			return "webp"
-		}
-		return "jpg" // Most Telegram photos are JPEG
-	}
-
-	// Special handling for videos
-	if strings.HasPrefix(fileId, "BAAC") {
-		return "mp4"
-	}
-
-	// Special handling for documents
-	if strings.HasPrefix(fileId, "BAAD") || strings.HasPrefix(fileId, "BQA") {
-		// Check if it's actually an image in document form
-		if len(data) > 0 {
-			// Check file signatures
-			if bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
-				return "jpg"
-			}
-			if bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47}) {
-				return "png"
-			}
-			if bytes.HasPrefix(data, []byte("RIFF")) && len(data) > 11 && bytes.Equal(data[8:12], []byte("WEBP")) {
-				return "webp"
-			}
-			if bytes.HasPrefix(data, []byte("GIF")) {
-				return "gif"
-			}
-			// MP4 signature
-			if len(data) > 11 && (bytes.Equal(data[4:12], []byte("ftypmp42")) ||
-				bytes.Equal(data[4:12], []byte("ftypisom")) ||
-				bytes.Equal(data[4:12], []byte("ftypMSNV"))) {
-				return "mp4"
-			}
-		}
-	}
-
-	// Fallback to MIME type detection
+	// برای انواع مختلف فایل
 	switch {
-	case strings.Contains(mimeType, "jpeg") || strings.Contains(mimeType, "jpg"):
-		return "jpg"
-	case strings.Contains(mimeType, "png"):
-		return "png"
-	case strings.Contains(mimeType, "gif"):
-		return "gif"
-	case strings.Contains(mimeType, "webp"):
-		return "webp"
-	case strings.Contains(mimeType, "mp4"):
+	case strings.Contains(mimeType, "video"):
 		return "mp4"
-	case strings.Contains(mimeType, "mpeg"):
-		return "mpeg"
-	case strings.Contains(mimeType, "webm"):
-		return "webm"
-	case strings.Contains(mimeType, "pdf"):
+	case strings.Contains(mimeType, "image/jpeg") || strings.Contains(mimeType, "image/jpg"):
+		return "jpg"
+	case strings.Contains(mimeType, "image/png"):
+		return "png"
+	case strings.Contains(mimeType, "image/gif"):
+		return "gif"
+	case strings.Contains(mimeType, "image/webp"):
+		return "webp"
+	case strings.Contains(mimeType, "audio/mpeg"):
+		return "mp3"
+	case strings.Contains(mimeType, "audio"):
+		return "mp3"
+	case strings.Contains(mimeType, "application/pdf"):
 		return "pdf"
-	case strings.Contains(mimeType, "zip"):
+	case strings.Contains(mimeType, "application/zip"):
 		return "zip"
 	case strings.Contains(mimeType, "text"):
 		return "txt"
 	default:
-		// Extract from mime type if possible
+		// استخراج از mime type
 		parts := strings.Split(mimeType, "/")
 		if len(parts) == 2 && parts[1] != "" && !strings.Contains(parts[1], "octet-stream") {
 			return strings.Split(parts[1], ";")[0]
@@ -157,8 +112,14 @@ func getContentTypeFromExtension(ext string) string {
 		return "image/webp"
 	case "mp4":
 		return "video/mp4"
+	case "avi":
+		return "video/x-msvideo"
+	case "mov":
+		return "video/quicktime"
 	case "webm":
 		return "video/webm"
+	case "mp3":
+		return "audio/mpeg"
 	case "pdf":
 		return "application/pdf"
 	case "zip":
@@ -227,7 +188,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 				log.Printf("⚠️ Failed to get object stat, continuing: %v", err)
 			}
 
-			data, err := io.ReadAll(object)
+			data, _ := io.ReadAll(object)
 			_ = object.Close()
 
 			if err != nil {
@@ -304,7 +265,17 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 			}
 		}
 
+		// 📊 Debug logging for file path
+		log.Printf("📁 Raw file path from Telegram: %v (type: %T)", filePath, filePath)
+		if filePathStr, ok := filePath.(string); ok {
+			log.Printf("📁 Path contains 'video': %v", strings.Contains(filePathStr, "video"))
+			log.Printf("📁 Path contains 'document': %v", strings.Contains(filePathStr, "document"))
+			log.Printf("📁 Path contains 'photo': %v", strings.Contains(filePathStr, "photo"))
+			log.Printf("📁 Path contains 'animation': %v", strings.Contains(filePathStr, "animation"))
+		}
+
 		filePathString := selectedBotApi.Explode(filePath.(string))
+		log.Printf("📁 After Explode: %s", filePathString)
 
 		fileData, resContentType, downloadBotName, err = raceDownloadFileWithNamesOptimized(namedBots, filePathString)
 		if err != nil {

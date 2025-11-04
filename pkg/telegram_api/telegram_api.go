@@ -2,7 +2,6 @@ package telegram_api
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -10,41 +9,13 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// Dynamic URL selection based on proxy availability
-func getBaseURL() string {
-	proxyURL := "http://94.130.99.214"
-	officialURL := "https://api.telegram.org"
-
-	// Check if proxy is available with short timeout
-	client := &http.Client{
-		Timeout: 2 * time.Second,
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   1 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-		},
-	}
-
-	testURL := fmt.Sprintf("%s/bot123/test", proxyURL)
-	resp, err := client.Get(testURL)
-	if err == nil {
-		resp.Body.Close()
-		log.Printf("✅ Using proxy URL: %s", proxyURL)
-		return proxyURL
-	}
-
-	log.Printf("⚠️ Proxy unavailable (%v), using official API: %s", err, officialURL)
-	return officialURL
-}
-
-var BaseUrl = getBaseURL()
+const BaseUrl = "http://94.130.99.214"
+// const BaseUrl = "https://api.telegram.org"
 const ContentType = "application/json"
 
 type TelegramAPI struct {
@@ -53,29 +24,16 @@ type TelegramAPI struct {
 }
 
 func New(token string) *TelegramAPI {
-	// Optimized HTTP client with connection pooling
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			MaxIdleConns:        100,
-			MaxConnsPerHost:     100,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     90 * time.Second,
-			DialContext: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			ForceAttemptHTTP2:     true,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
 		},
-		Timeout: 60 * time.Second, // Overall timeout
+		Timeout: 300 * time.Second,
 	}
 
 	api := TelegramAPI{
-		client: client,
-		token:  token,
+		client,
+		token,
 	}
 
 	return &api
@@ -100,11 +58,6 @@ type GetFileResponse struct {
 }
 
 func (h *TelegramAPI) GetFile(fileId string) (string, error) {
-	return h.GetFileWithContext(context.Background(), fileId)
-}
-
-// GetFileWithContext - Version with context support for timeouts
-func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (string, error) {
 	bodyRaw := map[string]string{
 		"file_id": fileId,
 	}
@@ -114,38 +67,21 @@ func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (st
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(body))
+	response, err := h.client.Post(reqURL, ContentType, bytes.NewBuffer(body))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", ContentType)
 
-	response, err := h.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
-	}
 	defer response.Body.Close()
-
-	resBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response: %w", err)
-	}
-
+	resBody, _ := io.ReadAll(response.Body)
 	if response.StatusCode != 200 {
-		return "", fmt.Errorf("telegram API error (status %d): %s", response.StatusCode, string(resBody))
+		return "", errors.New("telegram failed " + string(resBody))
 	}
 
 	var result GetFileResponse
-	if err := json.Unmarshal(resBody, &result); err != nil {
-		return "", fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	if !result.Ok {
-		return "", fmt.Errorf("telegram API returned error: %s", result.Description)
-	}
-
-	if result.Result.FilePath == "" {
-		return "", errors.New("empty file path in response")
+	errJson := json.Unmarshal(resBody, &result)
+	if errJson != nil {
+		return "", errJson
 	}
 
 	log.Printf("📁 GetFile successful: %s (size: %d bytes)", result.Result.FilePath, result.Result.FileSize)
@@ -153,76 +89,174 @@ func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (st
 }
 
 func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
-	return h.DownloadFileWithContext(context.Background(), filePath)
-}
+	// تمیز کردن مسیر
+	cleanPath := strings.TrimPrefix(filePath, "/")
 
-// DownloadFileWithContext - Version with context support for timeouts
-func (h *TelegramAPI) DownloadFileWithContext(ctx context.Context, filePath string) ([]byte, string, error) {
-	// Clean the file path
-	cleanPath := filePath
-	if !strings.HasPrefix(filePath, "/") {
-		cleanPath = "/" + filePath
-	}
+	reqURL := BaseUrl + "/file/bot" + h.token + "/" + cleanPath
+	log.Printf("📥 Downloading from: %s", reqURL)
 
-	reqURL := BaseUrl + "/file/bot" + h.token + cleanPath
-
-	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	response, err := h.client.Get(reqURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
+		return nil, "", fmt.Errorf("request failed: %w", err)
 	}
 
-	// Use a separate client with longer timeout for downloads
-	downloadClient := &http.Client{
-		Transport: h.client.Transport,
-		Timeout:   120 * time.Second, // Longer timeout for large files
-	}
-
-	response, err := downloadClient.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("download request failed: %w", err)
-	}
 	defer response.Body.Close()
-
-	// Read response with size limit
-	const maxSize = 50 * 1024 * 1024 // 50MB max
-	limitedReader := io.LimitReader(response.Body, maxSize)
-
-	resBody, err := io.ReadAll(limitedReader)
+	resBody, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to read file data: %w", err)
+		return nil, "", fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if response.StatusCode != 200 {
+		// اگه از پروکسی 404 گرفت، سعی کن از API اصلی
+		if response.StatusCode == 404 {
+			log.Printf("⚠️ Proxy returned 404, trying official Telegram API...")
+
+			officialURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
+			response2, err := h.client.Get(officialURL)
+			if err != nil {
+				return nil, "", fmt.Errorf("official API also failed: %w", err)
+			}
+			defer response2.Body.Close()
+
+			resBody2, err := io.ReadAll(response2.Body)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to read from official API: %w", err)
+			}
+
+			if response2.StatusCode == 200 {
+				log.Printf("✅ Downloaded from official API successfully")
+				return resBody2, response2.Header.Get("Content-Type"), nil
+			}
+
+			return nil, "", fmt.Errorf("both proxy and official API failed (status %d)", response2.StatusCode)
+		}
+
 		return nil, "", fmt.Errorf("download failed (status %d): %s", response.StatusCode, string(resBody))
 	}
 
 	resContentType := response.Header.Get("Content-Type")
-	log.Printf("📥 Downloaded %d bytes (type: %s)", len(resBody), resContentType)
-
+	log.Printf("✅ Downloaded %d bytes (type: %s)", len(resBody), resContentType)
 	return resBody, resContentType, nil
 }
 
-func (h *TelegramAPI) Explode(filePath string) string {
-	// Remove the token from the file path if present
-	parts := strings.Split(filePath, h.token)
-	if len(parts) > 1 {
-		return parts[1]
+func (h *TelegramAPI) Explode(filePath interface{}) string {
+	// تبدیل به string
+	filePathStr, ok := filePath.(string)
+	if !ok {
+		log.Printf("⚠️ Explode: invalid filePath type: %T", filePath)
+		return ""
 	}
-	// If token not found, check for "/file/bot" prefix
-	if strings.HasPrefix(filePath, "/file/bot") {
-		return strings.TrimPrefix(filePath, "/file/bot"+h.token)
+
+	log.Printf("🔍 Explode input: %s", filePathStr)
+
+	// لیست کامل پوشه‌های ممکن در تلگرام (ترتیب مهمه!)
+	knownDirs := []string{
+		"photos",        // عکس‌ها
+		"videos",        // ویدیوها
+		"video_notes",   // ویدیو نوت‌ها
+		"animations",    // GIF ها و انیمیشن‌ها
+		"documents",     // فایل‌ها (شامل ویدیوهای بزرگ)
+		"voice",         // ویس
+		"audio",         // موزیک و صدا
+		"music",         // موزیک (نسخه قدیمی)
+		"stickers",      // استیکر
+		"thumbnails",    // تصاویر کوچک
+		"profile_photos", // عکس پروفایل
 	}
-	// If path doesn't contain token, return as is
-	return filePath
+
+	// روش 1: جستجوی پوشه‌های شناخته شده
+	for _, dir := range knownDirs {
+		// چک کن که این پوشه در مسیر وجود داره
+		if strings.Contains(filePathStr, "/"+dir+"/") {
+			// پیدا کردن آخرین موقعیت این پوشه (ممکنه چندبار تکرار شده باشه)
+			idx := strings.LastIndex(filePathStr, "/"+dir+"/")
+			if idx != -1 {
+				// از شروع پوشه تا انتها رو برگردون (بدون / اول)
+				result := filePathStr[idx+1:]
+				log.Printf("✅ Found '%s' directory, extracted: %s", dir, result)
+				return result
+			}
+		}
+	}
+
+	// روش 2: اگه مسیر کامل سرور داره، حذفش کن
+	serverPaths := []string{
+		"/var/www/html/bot/",
+		"/var/www/html/",
+		"/home/",
+		"/opt/",
+		"/bot/",
+	}
+
+	cleanPath := filePathStr
+	for _, serverPath := range serverPaths {
+		if strings.Contains(cleanPath, serverPath) {
+			// پیدا کردن و حذف مسیر سرور
+			idx := strings.Index(cleanPath, serverPath)
+			if idx != -1 {
+				cleanPath = cleanPath[idx+len(serverPath):]
+				log.Printf("🔧 Removed server path: %s", serverPath)
+				break
+			}
+		}
+	}
+
+	// حذف توکن از مسیر اگه وجود داره
+	if strings.Contains(cleanPath, h.token) {
+		parts := strings.Split(cleanPath, h.token)
+		if len(parts) > 1 && parts[1] != "" {
+			cleanPath = strings.TrimPrefix(parts[1], "/")
+			log.Printf("🔧 Removed token, path now: %s", cleanPath)
+
+			// دوباره چک کن برای پوشه‌های شناخته شده
+			for _, dir := range knownDirs {
+				if strings.HasPrefix(cleanPath, dir+"/") {
+					log.Printf("✅ Found directory after token removal: %s", cleanPath)
+					return cleanPath
+				}
+			}
+		}
+	}
+
+	// روش 3: دو بخش آخر مسیر (folder/filename)
+	parts := strings.Split(filePathStr, "/")
+	var nonEmptyParts []string
+	for _, part := range parts {
+		if part != "" {
+			nonEmptyParts = append(nonEmptyParts, part)
+		}
+	}
+
+	if len(nonEmptyParts) >= 2 {
+		// دو بخش آخر رو برگردون
+		result := nonEmptyParts[len(nonEmptyParts)-2] + "/" + nonEmptyParts[len(nonEmptyParts)-1]
+
+		// چک کن که آیا بخش اول یک پوشه شناخته شده هست
+		folderName := nonEmptyParts[len(nonEmptyParts)-2]
+		for _, dir := range knownDirs {
+			if folderName == dir {
+				log.Printf("✅ Using last two parts (recognized folder): %s", result)
+				return result
+			}
+		}
+
+		log.Printf("⚠️ Using last two parts (unrecognized folder): %s", result)
+		return result
+	}
+
+	// اگه فقط یک بخش داریم
+	if len(nonEmptyParts) == 1 {
+		result := nonEmptyParts[0]
+		log.Printf("⚠️ Only one part found: %s", result)
+		return result
+	}
+
+	log.Printf("❌ Could not process path, returning as-is: %s", filePathStr)
+	return filePathStr
 }
 
 func (h *TelegramAPI) UploadFile(contentType string, fileName string, data []byte, chatId string) (string, error) {
-	return h.UploadFileWithContext(context.Background(), contentType, fileName, data, chatId)
-}
-
-// UploadFileWithContext - Version with context support for timeouts
-func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType string, fileName string, data []byte, chatId string) (string, error) {
-	// Determine the appropriate form field based on content type
+	// تعیین نوع فیلد بر اساس content type
 	var formField string
 	if strings.Contains(contentType, "image") {
 		formField = "photo"
@@ -234,28 +268,29 @@ func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType str
 		formField = "document"
 	}
 
-	// Prepare the request body
+	// آماده‌سازی request body
 	body := &bytes.Buffer{}
 	mwriter := multipart.NewWriter(body)
 
-	// Define the request URL - Fix capitalization
+	// تعیین URL endpoint
 	var reqUrl string
-	if formField == "photo" {
+	switch formField {
+	case "photo":
 		reqUrl = BaseUrl + "/bot" + h.token + "/sendPhoto"
-	} else if formField == "audio" {
+	case "audio":
 		reqUrl = BaseUrl + "/bot" + h.token + "/sendAudio"
-	} else if formField == "video" {
+	case "video":
 		reqUrl = BaseUrl + "/bot" + h.token + "/sendVideo"
-	} else {
+	default:
 		reqUrl = BaseUrl + "/bot" + h.token + "/sendDocument"
 	}
 
-	// Write the 'chat_id' field
+	// نوشتن chat_id
 	if err := mwriter.WriteField("chat_id", chatId); err != nil {
 		return "", fmt.Errorf("failed to write chat_id: %w", err)
 	}
 
-	// Create file field
+	// ایجاد فیلد فایل
 	fileWriter, err := mwriter.CreateFormFile(formField, fileName)
 	if err != nil {
 		return "", fmt.Errorf("failed to create form file: %w", err)
@@ -265,32 +300,26 @@ func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType str
 		return "", fmt.Errorf("failed to write file data: %w", err)
 	}
 
-	// Close the multipart writer
+	// بستن multipart writer
 	if err := mwriter.Close(); err != nil {
 		return "", fmt.Errorf("failed to close multipart writer: %w", err)
 	}
 
-	// Create the HTTP request
-	req, err := http.NewRequestWithContext(ctx, "POST", reqUrl, body)
+	// ایجاد HTTP request
+	req, err := http.NewRequest("POST", reqUrl, body)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", mwriter.FormDataContentType())
 
-	// Use a separate client with longer timeout for uploads
-	uploadClient := &http.Client{
-		Transport: h.client.Transport,
-		Timeout:   180 * time.Second, // 3 minutes for large uploads
-	}
-
-	// Send the request
-	response, err := uploadClient.Do(req)
+	// ارسال request
+	response, err := h.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("upload request failed: %w", err)
+		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer response.Body.Close()
 
+	defer response.Body.Close()
 	resBody, err := io.ReadAll(response.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
@@ -300,20 +329,20 @@ func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType str
 		return "", fmt.Errorf("telegram upload failed (status %d): %s", response.StatusCode, string(resBody))
 	}
 
-	// Parse the JSON response
+	// پردازش JSON response
 	var tgResponse map[string]interface{}
 	if err := json.Unmarshal(resBody, &tgResponse); err != nil {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	// Check if the response is OK
+	// چک کردن نتیجه
 	ok, _ := tgResponse["ok"].(bool)
 	if !ok {
 		description, _ := tgResponse["description"].(string)
 		return "", fmt.Errorf("telegram API error: %s", description)
 	}
 
-	// Extract file_id based on the field type
+	// استخراج file_id بر اساس نوع فیلد
 	result, ok := tgResponse["result"].(map[string]interface{})
 	if !ok {
 		return "", errors.New("invalid response format: missing result")
@@ -331,7 +360,7 @@ func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType str
 		if !ok || len(photos) == 0 {
 			return "", errors.New("missing photo array in response")
 		}
-		// Get the largest photo (last in array)
+		// گرفتن بزرگترین عکس (آخرین در آرایه)
 		lastPhoto, ok := photos[len(photos)-1].(map[string]interface{})
 		if !ok {
 			return "", errors.New("invalid photo format in response")
@@ -345,4 +374,13 @@ func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType str
 
 	log.Printf("📤 Upload successful: %s (FileID: %s)", fileName, fileID)
 	return fileID, nil
+}
+
+// متدهای با Context support
+func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (string, error) {
+	return h.GetFile(fileId)
+}
+
+func (h *TelegramAPI) DownloadFileWithContext(ctx context.Context, filePath string) ([]byte, string, error) {
+	return h.DownloadFile(filePath)
 }
