@@ -82,21 +82,9 @@ func main() {
 
 	log.Printf("🔧 Starting server initialization...")
 
-	// Initiate MinIO
-	var minioClients config.MinIOClients
+	// Initialize MinIO
 	minioConfig := config.GetMinioCredentials()
-
-	// Try to initialize MinIO, but continue if it fails (for development)
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("❌ MinIO initialization failed: %v", r)
-			log.Printf("⚠️ Starting without MinIO support - storage features will not work")
-			// Create a dummy MinIO client
-			minioClients = config.MinIOClients{}
-		}
-	}()
-
-	minioClients = config.GetMinIOClients(minioConfig)
+	minioClients := config.GetMinIOClients(minioConfig)
 	log.Printf("✅ MinIO client initialized")
 
 	// Initialize Snitch configuration (optional)
@@ -127,7 +115,7 @@ func main() {
 		StreamRequestBody: true, // Enable streaming for better memory usage
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
-		BodyLimit:         512 * 1024 * 1024, // 512MB limit
+		BodyLimit:         512 * 1024 * 1024, // this is the default limit of 512MB
 		ReadBufferSize:    8192,              // Optimize read buffer size
 		WriteBufferSize:   8192,              // Optimize write buffer size
 		Network:           "tcp",
@@ -139,9 +127,7 @@ func main() {
 	})
 
 	// Middlewares
-	app.Use(recover.New(recover.Config{
-		EnableStackTrace: true,
-	}))
+	app.Use(recover.New())
 	app.Use(etag.New())
 	app.Use(earlydata.New())
 	app.Use(idempotency.New())
@@ -169,7 +155,7 @@ func main() {
 
 	// Attach other configurations
 	app.Use(func(ctx *fiber.Ctx) error {
-		// Set the bot scope configuration
+		// Set the bot scope configuration - contains all bot arrays in hashmap
 		ctx.Locals("BOT_SCOPE_CONFIG", botScopeConfig)
 		ctx.Locals("INSTAGRAM_API", instagramApi)
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
@@ -199,7 +185,7 @@ func main() {
 		return c.JSON(health)
 	})
 
-	// Status endpoint
+	// Root endpoint
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"result":  true,
@@ -215,10 +201,11 @@ func main() {
 		})
 	})
 
-	// Register routes
 	// ZIP operations
 	app.Post("/zip/multi", controllers.ZipMultipleFiles)
+	// Alternative high-performance endpoint
 	app.Post("/zip/multi/optimized", controllers.ZipMultipleFilesOptimized)
+	// Performance monitoring endpoint
 	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
 
 	// Telegram upload operations
@@ -267,10 +254,9 @@ func main() {
 	log.Printf("========================================")
 
 	// Start server
-	if err := app.Listen(HOST + ":" + PORT); err != nil {
-		if minioClients.Storage != nil {
-			_ = minioClients.Storage.Close()
-		}
+	err := app.Listen(HOST + ":" + PORT)
+	if err != nil {
+		_ = minioClients.Storage.Close()
 		log.Fatal("Failed to start server: ", err)
 	}
 }
