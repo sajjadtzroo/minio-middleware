@@ -94,6 +94,7 @@ type GetFileResponse struct {
 	Result struct {
 		FilePath string `json:"file_path"`
 		FileSize int64  `json:"file_size"`
+		FileId   string `json:"file_id"`
 	} `json:"result"`
 	Description string `json:"description,omitempty"`
 }
@@ -157,7 +158,13 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 
 // DownloadFileWithContext - Version with context support for timeouts
 func (h *TelegramAPI) DownloadFileWithContext(ctx context.Context, filePath string) ([]byte, string, error) {
-	reqURL := BaseUrl + "/file/bot" + h.token + filePath
+	// Clean the file path
+	cleanPath := filePath
+	if !strings.HasPrefix(filePath, "/") {
+		cleanPath = "/" + filePath
+	}
+
+	reqURL := BaseUrl + "/file/bot" + h.token + cleanPath
 
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
@@ -205,6 +212,7 @@ func (h *TelegramAPI) Explode(filePath string) string {
 	if strings.HasPrefix(filePath, "/file/bot") {
 		return strings.TrimPrefix(filePath, "/file/bot"+h.token)
 	}
+	// If path doesn't contain token, return as is
 	return filePath
 }
 
@@ -230,8 +238,17 @@ func (h *TelegramAPI) UploadFileWithContext(ctx context.Context, contentType str
 	body := &bytes.Buffer{}
 	mwriter := multipart.NewWriter(body)
 
-	// Define the request URL
-	reqUrl := BaseUrl + "/bot" + h.token + "/send" + strings.Title(formField)
+	// Define the request URL - Fix capitalization
+	var reqUrl string
+	if formField == "photo" {
+		reqUrl = BaseUrl + "/bot" + h.token + "/sendPhoto"
+	} else if formField == "audio" {
+		reqUrl = BaseUrl + "/bot" + h.token + "/sendAudio"
+	} else if formField == "video" {
+		reqUrl = BaseUrl + "/bot" + h.token + "/sendVideo"
+	} else {
+		reqUrl = BaseUrl + "/bot" + h.token + "/sendDocument"
+	}
 
 	// Write the 'chat_id' field
 	if err := mwriter.WriteField("chat_id", chatId); err != nil {

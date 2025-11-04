@@ -54,7 +54,7 @@ func raceGetFile(botAPIs []*telegram_api.TelegramAPI, fileId string) (interface{
 				filePath: filePath,
 				err:      err,
 				botAPI:   api,
-				botName:  "unknown", // Will be enhanced with named version
+				botName:  "unknown",
 			}
 		}(botAPI)
 	}
@@ -202,7 +202,7 @@ func raceDownloadFile(botAPIs []*telegram_api.TelegramAPI, filePathString string
 				contentType: contentType,
 				err:         err,
 				botAPI:      api,
-				botName:     "unknown", // Will be enhanced with named version
+				botName:     "unknown",
 			}
 		}(botAPI)
 	}
@@ -349,7 +349,7 @@ func raceUploadFile(botAPIs []*telegram_api.TelegramAPI, contentType, filename s
 				fileId:  fileId,
 				err:     err,
 				botAPI:  api,
-				botName: "unknown", // Will be enhanced with named version
+				botName: "unknown",
 			}
 		}(botAPI)
 	}

@@ -44,12 +44,12 @@ func main() {
 	instagramApi := instagram_api.New(os.Getenv("INSTAGRAM_API"))
 
 	app := fiber.New(fiber.Config{
-		AppName:           "Go Downloader",
+		AppName:           "Go Downloader v1.2.0",
 		ErrorHandler:      utils.CustomErrorHandler,
 		StreamRequestBody: true, // Enable streaming for better memory usage
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
-		BodyLimit:         512 * 1024 * 1024, // this is the default limit of 512MB
+		BodyLimit:         512 * 1024 * 1024, // 512MB limit
 		ReadBufferSize:    16384,             // Increased from 8192
 		WriteBufferSize:   16384,             // Increased from 8192
 		Network:           "tcp",
@@ -70,6 +70,7 @@ func main() {
 		AllowOrigins: "*",
 		AllowMethods: "*",
 		AllowHeaders: "*",
+		MaxAge:       3600,
 	}))
 
 	// Rate limiting - important for preventing abuse
@@ -94,10 +95,11 @@ func main() {
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault, // Better performance than LevelBestCompression
 		Next: func(c *fiber.Ctx) bool {
-			// Skip compression for zip endpoints as they're already compressed
-			// and for streaming responses
-			return strings.HasPrefix(c.Path(), "/zip/") ||
-				   strings.HasPrefix(c.Path(), "/instant/")
+			// Skip compression for zip endpoints and streaming responses
+			path := c.Path()
+			return strings.HasPrefix(path, "/zip/") ||
+				   strings.HasPrefix(path, "/instant/") ||
+				   strings.Contains(c.Get("Accept-Encoding"), "identity")
 		},
 	}))
 
@@ -107,13 +109,12 @@ func main() {
 	app.Use(func(ctx *fiber.Ctx) error {
 		// Set the bot scope configuration - contains all bot arrays in hashmap
 		ctx.Locals("BOT_SCOPE_CONFIG", botScopeConfig)
-
 		ctx.Locals("INSTAGRAM_API", instagramApi)
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
 		return ctx.Next()
 	})
 
-	// Health check endpoint - NEW!
+	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
 		botScopes := botScopeConfig.GetAllScopes()
 		return c.JSON(fiber.Map{
@@ -122,19 +123,6 @@ func main() {
 			"bot_scopes": botScopes,
 			"version":    "1.2.0",
 			"cache":      "enabled",
-		})
-	})
-
-	// Status endpoint with more details
-	app.Get("/status", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"result": true,
-			"server": fiber.Map{
-				"host":    HOST,
-				"port":    PORT,
-				"uptime":  time.Since(time.Now()).Seconds(),
-				"version": "1.2.0",
-			},
 			"features": fiber.Map{
 				"cache_enabled":    true,
 				"bot_racing":       true,
@@ -146,10 +134,32 @@ func main() {
 		})
 	})
 
+	// Status endpoint with more details
+	app.Get("/status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"result": true,
+			"server": fiber.Map{
+				"host":    HOST,
+				"port":    PORT,
+				"version": "1.2.0",
+			},
+			"performance": fiber.Map{
+				"cache_enabled":       true,
+				"optimized_timeouts":  true,
+				"connection_pooling":  true,
+				"rate_limiting":       true,
+				"compression_enabled": true,
+			},
+		})
+	})
+
+	// Favicon handler
+	app.Get("/favicon.ico", func(c *fiber.Ctx) error {
+		return c.SendStatus(204)
+	})
+
 	app.Post("/zip/multi", controllers.ZipMultipleFiles)
-	// Alternative high-performance endpoint
 	app.Post("/zip/multi/optimized", controllers.ZipMultipleFilesOptimized)
-	// Performance monitoring endpoint
 	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
 
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
@@ -171,10 +181,14 @@ func main() {
 	// Bot scope management
 	app.Get("/bot-scopes", controllers.ListBotScopes)
 
+	log.Printf("=====================================")
 	log.Printf("🚀 Server starting on: %s:%s", HOST, PORT)
 	log.Printf("✅ Cache: ENABLED")
 	log.Printf("✅ Bot Racing: OPTIMIZED")
 	log.Printf("✅ Rate Limiting: ENABLED")
+	log.Printf("✅ Connection Pooling: ENABLED")
+	log.Printf("✅ Version: 1.2.0")
+	log.Printf("=====================================")
 
 	err = app.Listen(HOST + ":" + PORT)
 
