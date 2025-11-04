@@ -2,6 +2,7 @@ package telegram_api
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"time"
 )
-
 const BaseUrl = "http://94.130.99.214"
 // const BaseUrl = "https://api.telegram.org"
 const ContentType = "application/json"
