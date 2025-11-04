@@ -251,7 +251,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	var err error
 
 	if useRacing {
-		// Use optimized racing mode
+		// Use optimized racing mode for GetFile
 		filePath, selectedBotApi, winningBotName, err := raceGetFileWithNamesOptimized(namedBots, fileId)
 		if err != nil {
 			log.Printf("❌ raceGetFileWithNamesOptimized failed: %v", err)
@@ -265,7 +265,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 			}
 		}
 
-		// 📊 Debug logging for file path
+		// Debug logging for file path
 		log.Printf("📁 Raw file path from Telegram: %v (type: %T)", filePath, filePath)
 		if filePathStr, ok := filePath.(string); ok {
 			log.Printf("📁 Path contains 'video': %v", strings.Contains(filePathStr, "video"))
@@ -277,22 +277,37 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 		filePathString := selectedBotApi.Explode(filePath.(string))
 		log.Printf("📁 After Explode: %s", filePathString)
 
-		fileData, resContentType, downloadBotName, err = raceDownloadFileWithNamesOptimized(namedBots, filePathString)
+		// ⚡ مهم: اول با همون باتی که GetFile برنده شده دانلود کن
+		log.Printf("🎯 Using winner bot '%s' for download (no racing)", winningBotName)
+
+		fileData, resContentType, err = selectedBotApi.DownloadFile(filePathString)
 		if err != nil {
-			log.Printf("❌ raceDownloadFileWithNamesOptimized failed: %v", err)
-			// Try without optimization as fallback
-			fileData, resContentType, downloadBotName, err = raceDownloadFileWithNames(namedBots, filePathString)
+			log.Printf("❌ Winner bot '%s' failed to download: %v", winningBotName, err)
+			log.Printf("🔄 Falling back to racing mode for download...")
+
+			// فقط اگه بات برنده fail شد، با بقیه racing کن
+			fileData, resContentType, downloadBotName, err = raceDownloadFileWithNamesOptimized(namedBots, filePathString)
 			if err != nil {
-				return ctx.Status(500).JSON(models.GenericResponse{
-					Result:  false,
-					Message: "Failed to download from Telegram",
-				})
+				log.Printf("❌ Optimized racing also failed: %v", err)
+				// آخرین تلاش با racing معمولی
+				fileData, resContentType, downloadBotName, err = raceDownloadFileWithNames(namedBots, filePathString)
+				if err != nil {
+					log.Printf("❌ All download attempts failed")
+					return ctx.Status(500).JSON(models.GenericResponse{
+						Result:  false,
+						Message: "Failed to download from Telegram",
+					})
+				}
 			}
+			usedBotName = fmt.Sprintf("GetFile:%s|Download:%s", winningBotName, downloadBotName)
+		} else {
+			// بات برنده موفق شد
+			downloadBotName = winningBotName
+			usedBotName = winningBotName
+			log.Printf("✅ Winner bot '%s' successfully downloaded the file", winningBotName)
 		}
 
-		usedBotName = fmt.Sprintf("GetFile:%s|Download:%s", winningBotName, downloadBotName)
-		log.Printf("✅ Complete download chain: GetFile by '%s' → DownloadFile by '%s' for FileID: %s",
-			winningBotName, downloadBotName, fileId)
+		log.Printf("✅ Complete download chain for FileID: %s", fileId)
 	} else {
 		// Use specific bot
 		fileData, resContentType, usedBotName, err = downloadFileWithSpecificBot(namedBots, preferredBotName, fileId)
