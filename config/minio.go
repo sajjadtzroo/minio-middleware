@@ -1,9 +1,12 @@
 package config
 
 import (
-	"github.com/gofiber/storage/minio"
+	"log"
 	"os"
 	"strconv"
+	"strings"
+
+	"github.com/gofiber/storage/minio"
 )
 
 type MinIoConfig struct {
@@ -18,9 +21,16 @@ type MinIOClients struct {
 }
 
 func GetMinioCredentials() MinIoConfig {
+	endpoint := os.Getenv("MINIO_ENDPOINT")
+
+	// Clean endpoint - remove http:// or https:// if present
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+	endpoint = strings.TrimPrefix(endpoint, "https://")
+	endpoint = strings.TrimSpace(endpoint)
+
 	config := MinIoConfig{
-		Endpoint: os.Getenv("MINIO_ENDPOINT"),
-		UseSSL:   false, // default
+		Endpoint: endpoint,
+		UseSSL:   false, // default to false
 	}
 
 	// Try both formats for AccessKey
@@ -35,9 +45,14 @@ func GetMinioCredentials() MinIoConfig {
 		config.SecretKey = os.Getenv("MINIO_SECRET_KEY")
 	}
 
-	// Parse UseSSL from environment (optional)
+	// Parse UseSSL from environment
 	if useSSL := os.Getenv("MINIO_USE_SSL"); useSSL != "" {
 		config.UseSSL, _ = strconv.ParseBool(useSSL)
+	}
+
+	// If endpoint contains port 443, assume SSL
+	if strings.Contains(endpoint, ":443") {
+		config.UseSSL = true
 	}
 
 	if len(config.Endpoint) == 0 {
@@ -52,18 +67,36 @@ func GetMinioCredentials() MinIoConfig {
 		panic("MINIO_SECRETKEY or MINIO_SECRET_KEY is empty")
 	}
 
+	log.Printf("MinIO Configuration:")
+	log.Printf("  Endpoint: %s", config.Endpoint)
+	log.Printf("  UseSSL: %v", config.UseSSL)
+	log.Printf("  AccessKey: %s***", config.AccessKey[:3])
+
 	return config
 }
 
 func GetMinIOClients(config MinIoConfig) MinIOClients {
+	// Try to create the storage client
 	storage := minio.New(minio.Config{
-		Secure:   config.UseSSL,
+		Bucket:   "", // Leave empty, we specify bucket per operation
 		Endpoint: config.Endpoint,
+		Secure:   config.UseSSL,
 		Credentials: minio.Credentials{
 			AccessKeyID:     config.AccessKey,
 			SecretAccessKey: config.SecretKey,
 		},
+		Reset:           false, // Important: don't reset on each request
+		CacheTTL:        3600,  // Cache for 1 hour
+		RequestTimeout:  30,    // 30 seconds timeout
 	})
+
+	// Test connection
+	conn := storage.Conn()
+	if conn == nil {
+		panic("Failed to create MinIO connection")
+	}
+
+	log.Printf("✅ MinIO client created successfully")
 
 	return MinIOClients{
 		Storage: storage,
