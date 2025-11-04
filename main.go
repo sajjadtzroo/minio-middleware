@@ -18,6 +18,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/idempotency"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
 )
@@ -49,8 +50,8 @@ func main() {
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
 		BodyLimit:         512 * 1024 * 1024, // this is the default limit of 512MB
-		ReadBufferSize:    8192,              // Optimize read buffer size
-		WriteBufferSize:   8192,              // Optimize write buffer size
+		ReadBufferSize:    16384,             // Increased from 8192
+		WriteBufferSize:   16384,             // Increased from 8192
 		Network:           "tcp",
 		EnablePrintRoutes: false,
 		DisableKeepalive:  false,             // Keep connections alive for better performance
@@ -65,13 +66,38 @@ func main() {
 	app.Use(earlydata.New())
 	app.Use(idempotency.New())
 	app.Use(helmet.New())
-	app.Use(cors.New(cors.Config{AllowOrigins: "*", AllowMethods: "*", AllowHeaders: "*"}))
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: "*",
+		AllowHeaders: "*",
+	}))
+
+	// Rate limiting - important for preventing abuse
+	app.Use(limiter.New(limiter.Config{
+		Max:               100,
+		Expiration:        1 * time.Minute,
+		LimiterMiddleware: limiter.SlidingWindow{},
+		SkipFailedRequests: false,
+		SkipSuccessfulRequests: false,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP() // Rate limit by IP
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"result":  false,
+				"message": "Too many requests, please try again later",
+			})
+		},
+	}))
+
 	// Use moderate compression for better performance balance
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault, // Better performance than LevelBestCompression
 		Next: func(c *fiber.Ctx) bool {
 			// Skip compression for zip endpoints as they're already compressed
-			return strings.HasPrefix(c.Path(), "/zip/")
+			// and for streaming responses
+			return strings.HasPrefix(c.Path(), "/zip/") ||
+				   strings.HasPrefix(c.Path(), "/instant/")
 		},
 	}))
 
@@ -85,6 +111,39 @@ func main() {
 		ctx.Locals("INSTAGRAM_API", instagramApi)
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
 		return ctx.Next()
+	})
+
+	// Health check endpoint - NEW!
+	app.Get("/health", func(c *fiber.Ctx) error {
+		botScopes := botScopeConfig.GetAllScopes()
+		return c.JSON(fiber.Map{
+			"status":     "healthy",
+			"timestamp":  time.Now().Unix(),
+			"bot_scopes": botScopes,
+			"version":    "1.2.0",
+			"cache":      "enabled",
+		})
+	})
+
+	// Status endpoint with more details
+	app.Get("/status", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"result": true,
+			"server": fiber.Map{
+				"host":    HOST,
+				"port":    PORT,
+				"uptime":  time.Since(time.Now()).Seconds(),
+				"version": "1.2.0",
+			},
+			"features": fiber.Map{
+				"cache_enabled":    true,
+				"bot_racing":       true,
+				"named_bots":       true,
+				"rate_limiting":    true,
+				"compression":      true,
+				"optimized_racing": true,
+			},
+		})
 	})
 
 	app.Post("/zip/multi", controllers.ZipMultipleFiles)
@@ -112,7 +171,11 @@ func main() {
 	// Bot scope management
 	app.Get("/bot-scopes", controllers.ListBotScopes)
 
-	log.Printf("Started server on: %s:%s\n", HOST, PORT)
+	log.Printf("🚀 Server starting on: %s:%s", HOST, PORT)
+	log.Printf("✅ Cache: ENABLED")
+	log.Printf("✅ Bot Racing: OPTIMIZED")
+	log.Printf("✅ Rate Limiting: ENABLED")
+
 	err = app.Listen(HOST + ":" + PORT)
 
 	if err != nil {

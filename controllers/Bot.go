@@ -81,31 +81,55 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	specificBotFromQuery := ctx.Query("bot", "")
 
 	minioClient := ctx.Locals("minio").(*config.MinIOClients)
-	// objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), botName, minio.ListObjectsOptions{
-	// 	Prefix:    fileId,
-	// 	Recursive: true,
-	// 	UseV1:     true,
-	// })
 
-	// for info := range objectInfo {
-	// 	if info.Size > 0 {
-	// 		object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), botName, info.Key, minio.GetObjectOptions{})
-	// 		if err != nil {
-	// 			return ctx.Status(500).JSON(models.GenericResponse{
-	// 				Result:  false,
-	// 				Message: err.Error(),
-	// 			})
-	// 		}
+	// ✅ IMPORTANT: Check MinIO cache first - HUGE performance improvement!
+	log.Printf("🔍 Checking MinIO cache for FileID: %s in bucket: %s", fileId, botName)
 
-	// 		data, _ := io.ReadAll(object)
-	// 		ctx.Set("Content-Type", http.DetectContentType(data))
-	// 		ctx.Set("X-Serve", "Cache")
-	// 		_ = object.Close()
-	// 		return ctx.Status(200).Send(data)
-	// 	}
-	// }
+	// Use short timeout for cache check
+	cacheCtx, cancelCache := context.WithTimeout(ctx.UserContext(), 5*time.Second)
+	defer cancelCache()
 
-	log.Printf("Downloading from Telegram: %s", fileId)
+	objectInfo := minioClient.Storage.Conn().ListObjects(cacheCtx, botName, minio.ListObjectsOptions{
+		Prefix:    fileId,
+		Recursive: true,
+		UseV1:     true,
+	})
+
+	for info := range objectInfo {
+		if info.Size > 0 {
+			// File found in cache!
+			log.Printf("✅ Cache HIT for FileID: %s (Size: %d bytes, Key: %s)", fileId, info.Size, info.Key)
+
+			getCtx, cancelGet := context.WithTimeout(ctx.UserContext(), 10*time.Second)
+			defer cancelGet()
+
+			object, err := minioClient.Storage.Conn().GetObject(getCtx, botName, info.Key, minio.GetObjectOptions{})
+			if err != nil {
+				log.Printf("❌ Failed to get cached object: %v", err)
+				break // Continue to download from Telegram
+			}
+
+			data, err := io.ReadAll(object)
+			_ = object.Close()
+
+			if err != nil {
+				log.Printf("❌ Failed to read cached object: %v", err)
+				break // Continue to download from Telegram
+			}
+
+			// ✅ Return from cache - MUCH faster!
+			ctx.Set("Content-Type", http.DetectContentType(data))
+			ctx.Set("X-Serve", "Cache")
+			ctx.Set("X-Cache", "HIT")
+			ctx.Set("Cache-Control", "public, max-age=86400") // 24 hours browser cache
+			ctx.Set("X-Cache-Key", info.Key)
+			log.Printf("🚀 Serving from cache: %s (%d bytes)", fileId, len(data))
+			return ctx.Status(200).Send(data)
+		}
+	}
+
+	// ❌ Not in cache, download from Telegram
+	log.Printf("❌ Cache MISS for FileID: %s - Downloading from Telegram", fileId)
 
 	// Get named bots for bot selection
 	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
@@ -137,22 +161,24 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	var err error
 
 	if useRacing {
-		// Use racing mode (existing behavior)
-		filePath, selectedBotApi, winningBotName, err := raceGetFileWithNames(namedBots, fileId)
+		// Use optimized racing mode with timeouts
+		filePath, selectedBotApi, winningBotName, err := raceGetFileWithNamesOptimized(namedBots, fileId)
 		if err != nil {
+			log.Printf("❌ raceGetFileWithNamesOptimized failed: %v", err)
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
-				Message: "Failed to download from raceGetFileWithNames",
+				Message: "Failed to get file info from Telegram",
 			})
 		}
 
 		filePathString := selectedBotApi.Explode(filePath.(string))
 
-		fileData, resContentType, downloadBotName, err = raceDownloadFileWithNames(namedBots, filePathString)
+		fileData, resContentType, downloadBotName, err = raceDownloadFileWithNamesOptimized(namedBots, filePathString)
 		if err != nil {
+			log.Printf("❌ raceDownloadFileWithNamesOptimized failed: %v", err)
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
-				Message: "Failed to download from raceDownloadFileWithNames",
+				Message: "Failed to download from Telegram",
 			})
 		}
 
@@ -162,6 +188,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 		// Use specific bot
 		fileData, resContentType, usedBotName, err = downloadFileWithSpecificBot(namedBots, preferredBotName, fileId)
 		if err != nil {
+			log.Printf("❌ downloadFileWithSpecificBot failed: %v", err)
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
 				Message: "Failed to download with specific bot",
@@ -170,31 +197,49 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	}
 
 	mimeType := http.DetectContentType(fileData)
-	if strings.Contains(mimeType, "text/plain") {
+	if strings.Contains(mimeType, "text/plain") && resContentType != "" {
 		mimeType = resContentType
 	}
 
-	file := bytes.NewReader(fileData)
-	log.Printf("Uploading to MinIO: %s", fileId)
-	_, err = minioClient.Storage.Conn().PutObject(
-		ctx.UserContext(),
-		botName,
-		fileId+"."+strings.Split(mimeType, "/")[1],
-		file,
-		file.Size(),
-		minio.PutObjectOptions{},
-	)
+	// ✅ Upload to MinIO for future caching - in background
+	go func() {
+		uploadCtx, cancelUpload := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelUpload()
 
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
-	}
-	log.Printf("Uploaded to MinIO: %s", fileId)
+		file := bytes.NewReader(fileData)
+		extension := "bin"
+		if parts := strings.Split(mimeType, "/"); len(parts) == 2 {
+			extension = parts[1]
+		}
+		fileName := fileId + "." + extension
+
+		log.Printf("📤 Uploading to MinIO cache: %s (size: %d bytes)", fileName, file.Size())
+
+		_, err := minioClient.Storage.Conn().PutObject(
+			uploadCtx,
+			botName,
+			fileName,
+			file,
+			file.Size(),
+			minio.PutObjectOptions{
+				ContentType: mimeType,
+			},
+		)
+
+		if err != nil {
+			log.Printf("❌ Failed to cache in MinIO: %v", err)
+		} else {
+			log.Printf("✅ Successfully cached in MinIO: %s", fileName)
+		}
+	}()
+
+	// Return response immediately
 	ctx.Set("X-Serve", "Telegram")
+	ctx.Set("X-Cache", "MISS")
 	ctx.Set("Content-Type", mimeType)
 	ctx.Set("X-Downloaded-By", usedBotName)
+	ctx.Set("Cache-Control", "public, max-age=86400") // 24 hours browser cache
+	log.Printf("🚀 Serving from Telegram: %s (%d bytes)", fileId, len(fileData))
 	return ctx.Send(fileData)
 }
 
@@ -319,6 +364,9 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			MaxIdleConns:        10,
+			MaxConnsPerHost:     10,
+			MaxIdleConnsPerHost: 10,
 		},
 		Timeout: 60 * time.Second,
 	}

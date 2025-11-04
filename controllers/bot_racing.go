@@ -1,10 +1,12 @@
 package controllers
 
 import (
+	"context"
 	"go-uploader/config"
 	"go-uploader/pkg/telegram_api"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -119,6 +121,68 @@ func raceGetFileWithNames(namedBots []config.NamedBot, fileId string) (interface
 	return nil, nil, "", fiber.NewError(500, "All named bots failed to get file")
 }
 
+// raceGetFileWithNamesOptimized - Optimized version with timeouts and limited bot count
+func raceGetFileWithNamesOptimized(namedBots []config.NamedBot, fileId string) (interface{}, *telegram_api.TelegramAPI, string, error) {
+	if len(namedBots) == 0 {
+		return nil, nil, "", fiber.NewError(500, "No named bots available")
+	}
+
+	// Use only first 3 bots for speed
+	maxBots := 3
+	if len(namedBots) < maxBots {
+		maxBots = len(namedBots)
+	}
+	activeBots := namedBots[:maxBots]
+
+	log.Printf("🏁 Optimized GetFile with %d bots for FileID: %s", len(activeBots), fileId)
+
+	resultChan := make(chan raceGetFileResult, len(activeBots))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, namedBot := range activeBots {
+		go func(bot config.NamedBot) {
+			// Each bot gets its own timeout
+			botCtx, botCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer botCancel()
+
+			log.Printf("🚀 Bot '%s' attempting GetFile for FileID: %s", bot.Name, fileId)
+
+			// Use GetFileWithContext if available
+			filePath, err := bot.API.GetFileWithContext(botCtx, fileId)
+
+			select {
+			case resultChan <- raceGetFileResult{
+				filePath: filePath,
+				err:      err,
+				botAPI:   bot.API,
+				botName:  bot.Name,
+			}:
+			case <-ctx.Done():
+				log.Printf("⏱️ Bot '%s' GetFile cancelled (timeout)", bot.Name)
+			}
+		}(namedBot)
+	}
+
+	// Wait for first successful result
+	for i := 0; i < len(activeBots); i++ {
+		select {
+		case result := <-resultChan:
+			if result.err == nil {
+				cancel() // Cancel other operations
+				log.Printf("🏆 GetFile won by: '%s' (attempt %d/%d)", result.botName, i+1, len(activeBots))
+				return result.filePath, result.botAPI, result.botName, nil
+			}
+			log.Printf("❌ Bot '%s' failed: %v", result.botName, result.err)
+		case <-ctx.Done():
+			log.Printf("⏱️ GetFile timeout after %d attempts", i)
+			return nil, nil, "", fiber.NewError(500, "GetFile timeout")
+		}
+	}
+
+	return nil, nil, "", fiber.NewError(500, "All bots failed to get file")
+}
+
 // raceDownloadFile attempts to download file from multiple bot APIs concurrently
 func raceDownloadFile(botAPIs []*telegram_api.TelegramAPI, filePathString string) ([]byte, string, error) {
 	if len(botAPIs) == 0 {
@@ -204,6 +268,67 @@ func raceDownloadFileWithNames(namedBots []config.NamedBot, filePathString strin
 
 	log.Printf("💥 All %d bots failed DownloadFile for path: %s", len(namedBots), filePathString)
 	return nil, "", "", fiber.NewError(500, "All named bots failed to download file")
+}
+
+// raceDownloadFileWithNamesOptimized - Optimized version with timeouts
+func raceDownloadFileWithNamesOptimized(namedBots []config.NamedBot, filePathString string) ([]byte, string, string, error) {
+	if len(namedBots) == 0 {
+		return nil, "", "", fiber.NewError(500, "No named bots available")
+	}
+
+	// Use only first 2 bots for download
+	maxBots := 2
+	if len(namedBots) < maxBots {
+		maxBots = len(namedBots)
+	}
+	activeBots := namedBots[:maxBots]
+
+	log.Printf("🏁 Optimized DownloadFile with %d bots", len(activeBots))
+
+	resultChan := make(chan raceDownloadResult, len(activeBots))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	for _, namedBot := range activeBots {
+		go func(bot config.NamedBot) {
+			botCtx, botCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer botCancel()
+
+			log.Printf("🚀 Bot '%s' attempting DownloadFile", bot.Name)
+
+			fileData, contentType, err := bot.API.DownloadFileWithContext(botCtx, filePathString)
+
+			select {
+			case resultChan <- raceDownloadResult{
+				fileData:    fileData,
+				contentType: contentType,
+				err:         err,
+				botAPI:      bot.API,
+				botName:     bot.Name,
+			}:
+			case <-ctx.Done():
+				log.Printf("⏱️ Bot '%s' DownloadFile cancelled (timeout)", bot.Name)
+			}
+		}(namedBot)
+	}
+
+	// Wait for first successful result
+	for i := 0; i < len(activeBots); i++ {
+		select {
+		case result := <-resultChan:
+			if result.err == nil {
+				cancel()
+				log.Printf("🏆 DownloadFile won by: '%s' (%d bytes)", result.botName, len(result.fileData))
+				return result.fileData, result.contentType, result.botName, nil
+			}
+			log.Printf("❌ Bot '%s' failed: %v", result.botName, result.err)
+		case <-ctx.Done():
+			log.Printf("⏱️ DownloadFile timeout after %d attempts", i)
+			return nil, "", "", fiber.NewError(500, "DownloadFile timeout")
+		}
+	}
+
+	return nil, "", "", fiber.NewError(500, "All bots failed to download")
 }
 
 // raceUploadFile attempts to upload file to multiple bot APIs concurrently
