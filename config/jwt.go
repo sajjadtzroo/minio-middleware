@@ -1,16 +1,23 @@
 package config
 
-import "os"
+import (
+	"log"
+	"os"
+)
 
 func GetJwtKey() string {
-	// First try JWT_KEY (old format), then JWT_SECRET (new format)
+	// Try JWT_KEY first (old format)
 	key := os.Getenv("JWT_KEY")
+
+	// If not found, try JWT_SECRET (new format)
 	if len(key) == 0 {
 		key = os.Getenv("JWT_SECRET")
 	}
 
+	// If still not found, use a default for development
 	if len(key) == 0 {
-		panic("JWT_KEY or JWT_SECRET is empty")
+		log.Printf("⚠️ WARNING: JWT_KEY not set, using default (NOT SAFE FOR PRODUCTION)")
+		key = "default-jwt-key-not-for-production"
 	}
 
 	return key

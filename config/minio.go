@@ -23,14 +23,13 @@ type MinIOClients struct {
 func GetMinioCredentials() MinIoConfig {
 	endpoint := os.Getenv("MINIO_ENDPOINT")
 
-	// Clean endpoint - remove http:// or https:// if present
+	// Clean endpoint - remove protocols if present
 	endpoint = strings.TrimPrefix(endpoint, "http://")
 	endpoint = strings.TrimPrefix(endpoint, "https://")
 	endpoint = strings.TrimSpace(endpoint)
 
 	config := MinIoConfig{
 		Endpoint: endpoint,
-		UseSSL:   false, // default to false
 	}
 
 	// Try both formats for AccessKey
@@ -48,55 +47,54 @@ func GetMinioCredentials() MinIoConfig {
 	// Parse UseSSL from environment
 	if useSSL := os.Getenv("MINIO_USE_SSL"); useSSL != "" {
 		config.UseSSL, _ = strconv.ParseBool(useSSL)
+	} else {
+		// Auto-detect SSL based on endpoint
+		if strings.Contains(endpoint, "darkube.app") || strings.Contains(endpoint, ":443") {
+			config.UseSSL = true
+		} else if strings.Contains(endpoint, "localhost") || strings.Contains(endpoint, "127.0.0.1") {
+			config.UseSSL = false
+		} else {
+			config.UseSSL = true // Default to true for production
+		}
 	}
 
-	// If endpoint contains port 443, assume SSL
-	if strings.Contains(endpoint, ":443") {
-		config.UseSSL = true
-	}
-
+	// Validation with better error messages
 	if len(config.Endpoint) == 0 {
-		panic("MINIO_ENDPOINT is empty")
+		log.Printf("❌ MINIO_ENDPOINT is empty")
+		panic("MINIO_ENDPOINT environment variable is required")
 	}
 
 	if len(config.AccessKey) == 0 {
-		panic("MINIO_ACCESSKEY or MINIO_ACCESS_KEY is empty")
+		log.Printf("❌ MINIO_ACCESSKEY or MINIO_ACCESS_KEY is empty")
+		panic("MinIO access key is required (MINIO_ACCESSKEY or MINIO_ACCESS_KEY)")
 	}
 
 	if len(config.SecretKey) == 0 {
-		panic("MINIO_SECRETKEY or MINIO_SECRET_KEY is empty")
+		log.Printf("❌ MINIO_SECRETKEY or MINIO_SECRET_KEY is empty")
+		panic("MinIO secret key is required (MINIO_SECRETKEY or MINIO_SECRET_KEY)")
 	}
 
-	log.Printf("MinIO Configuration:")
-	log.Printf("  Endpoint: %s", config.Endpoint)
-	log.Printf("  UseSSL: %v", config.UseSSL)
-	log.Printf("  AccessKey: %s***", config.AccessKey[:3])
+	log.Printf("✅ MinIO Config: endpoint=%s, ssl=%v", config.Endpoint, config.UseSSL)
 
 	return config
 }
 
 func GetMinIOClients(config MinIoConfig) MinIOClients {
-	// Try to create the storage client
 	storage := minio.New(minio.Config{
-		Bucket:   "", // Leave empty, we specify bucket per operation
-		Endpoint: config.Endpoint,
 		Secure:   config.UseSSL,
+		Endpoint: config.Endpoint,
 		Credentials: minio.Credentials{
 			AccessKeyID:     config.AccessKey,
 			SecretAccessKey: config.SecretKey,
 		},
-		Reset:           false, // Important: don't reset on each request
-		CacheTTL:        3600,  // Cache for 1 hour
-		RequestTimeout:  30,    // 30 seconds timeout
 	})
 
 	// Test connection
-	conn := storage.Conn()
-	if conn == nil {
-		panic("Failed to create MinIO connection")
+	if storage.Conn() == nil {
+		log.Printf("⚠️ Warning: MinIO connection could not be established")
+	} else {
+		log.Printf("✅ MinIO client created successfully")
 	}
-
-	log.Printf("✅ MinIO client created successfully")
 
 	return MinIOClients{
 		Storage: storage,

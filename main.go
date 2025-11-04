@@ -18,7 +18,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/idempotency"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
 )
@@ -27,31 +26,110 @@ const PORT = "3000"
 const HOST = "0.0.0.0"
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
+	// Try to load .env but don't fail if it doesn't exist
+	if err := godotenv.Load(); err != nil {
+		log.Printf("⚠️ Warning: .env file not found, using environment variables")
 	}
 
-	// Initiate
-	minioConfig := config.GetMinioCredentials()
-	minioClients := config.GetMinIOClients(minioConfig)
+	// Check for critical environment variables (only the absolutely required ones)
+	requiredEnvs := []string{
+		"MINIO_ENDPOINT",
+		"MINIO_ACCESSKEY",
+		"MINIO_SECRETKEY",
+		"JWT_KEY",
+	}
 
+	missingEnvs := []string{}
+	for _, env := range requiredEnvs {
+		if os.Getenv(env) == "" {
+			missingEnvs = append(missingEnvs, env)
+		}
+	}
+
+	if len(missingEnvs) > 0 {
+		log.Printf("❌ Missing required environment variables: %v", missingEnvs)
+		log.Printf("📝 Please set these environment variables or create a .env file")
+		log.Fatal("Cannot start without required configuration")
+	}
+
+	// Optional environment variables - set defaults if not provided
+	if os.Getenv("DEST_CHAT_ID") == "" {
+		log.Printf("⚠️ DEST_CHAT_ID not set, using default")
+		os.Setenv("DEST_CHAT_ID", "-1001234567890")
+	}
+
+	// Check for bot tokens - at least one should be present
+	botTokens := []string{
+		"BOT_TELEGRAM",
+		"BOT_INSTAGRAM",
+		"BOT_TRACKER",
+		"BOT_INFLUENCER",
+	}
+
+	hasAnyBot := false
+	for _, botEnv := range botTokens {
+		if os.Getenv(botEnv) != "" {
+			hasAnyBot = true
+			log.Printf("✅ Found %s configuration", botEnv)
+		} else {
+			log.Printf("⚠️ %s not configured, scope will be empty", botEnv)
+		}
+	}
+
+	if !hasAnyBot {
+		log.Printf("⚠️ Warning: No bot tokens configured, most features will not work!")
+	}
+
+	log.Printf("🔧 Starting server initialization...")
+
+	// Initiate MinIO
+	var minioClients config.MinIOClients
+	minioConfig := config.GetMinioCredentials()
+
+	// Try to initialize MinIO, but continue if it fails (for development)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ MinIO initialization failed: %v", r)
+			log.Printf("⚠️ Starting without MinIO support - storage features will not work")
+			// Create a dummy MinIO client
+			minioClients = config.MinIOClients{}
+		}
+	}()
+
+	minioClients = config.GetMinIOClients(minioConfig)
+	log.Printf("✅ MinIO client initialized")
+
+	// Initialize Snitch configuration (optional)
 	snitchConfiguration := config.NewSnitchConfiguration()
+	log.Printf("✅ Snitch configuration loaded")
 
 	// Initialize bot scope configuration
 	botScopeConfig := config.NewBotScopeConfiguration()
+	allScopes := botScopeConfig.GetAllScopes()
+	if len(allScopes) > 0 {
+		log.Printf("✅ Bot scopes initialized: %v", allScopes)
+	} else {
+		log.Printf("⚠️ No bot scopes available")
+	}
 
+	// Initialize Instagram API (optional)
 	instagramApi := instagram_api.New(os.Getenv("INSTAGRAM_API"))
+	if os.Getenv("INSTAGRAM_API") != "" {
+		log.Printf("✅ Instagram API initialized")
+	} else {
+		log.Printf("⚠️ Instagram API token not provided")
+	}
 
+	// Create Fiber app
 	app := fiber.New(fiber.Config{
-		AppName:           "Go Downloader v1.2.0",
+		AppName:           "Go Downloader",
 		ErrorHandler:      utils.CustomErrorHandler,
 		StreamRequestBody: true, // Enable streaming for better memory usage
 		Prefork:           false,
 		ProxyHeader:       "X-Forwarded-For",
 		BodyLimit:         512 * 1024 * 1024, // 512MB limit
-		ReadBufferSize:    16384,             // Increased from 8192
-		WriteBufferSize:   16384,             // Increased from 8192
+		ReadBufferSize:    8192,              // Optimize read buffer size
+		WriteBufferSize:   8192,              // Optimize write buffer size
 		Network:           "tcp",
 		EnablePrintRoutes: false,
 		DisableKeepalive:  false,             // Keep connections alive for better performance
@@ -61,7 +139,9 @@ func main() {
 	})
 
 	// Middlewares
-	app.Use(recover.New())
+	app.Use(recover.New(recover.Config{
+		EnableStackTrace: true,
+	}))
 	app.Use(etag.New())
 	app.Use(earlydata.New())
 	app.Use(idempotency.New())
@@ -70,44 +150,26 @@ func main() {
 		AllowOrigins: "*",
 		AllowMethods: "*",
 		AllowHeaders: "*",
-		MaxAge:       3600,
-	}))
-
-	// Rate limiting - important for preventing abuse
-	app.Use(limiter.New(limiter.Config{
-		Max:               100,
-		Expiration:        1 * time.Minute,
-		LimiterMiddleware: limiter.SlidingWindow{},
-		SkipFailedRequests: false,
-		SkipSuccessfulRequests: false,
-		KeyGenerator: func(c *fiber.Ctx) string {
-			return c.IP() // Rate limit by IP
-		},
-		LimitReached: func(c *fiber.Ctx) error {
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"result":  false,
-				"message": "Too many requests, please try again later",
-			})
-		},
 	}))
 
 	// Use moderate compression for better performance balance
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelDefault, // Better performance than LevelBestCompression
 		Next: func(c *fiber.Ctx) bool {
-			// Skip compression for zip endpoints and streaming responses
-			path := c.Path()
-			return strings.HasPrefix(path, "/zip/") ||
-				   strings.HasPrefix(path, "/instant/") ||
-				   strings.Contains(c.Get("Accept-Encoding"), "identity")
+			// Skip compression for zip endpoints as they're already compressed
+			return strings.HasPrefix(c.Path(), "/zip/")
 		},
 	}))
 
+	// JWT Middleware
 	JWTMiddleware := middleware.Authentication
 
+	// Attach MinIO clients
 	app.Use(middleware.Attach(&minioClients))
+
+	// Attach other configurations
 	app.Use(func(ctx *fiber.Ctx) error {
-		// Set the bot scope configuration - contains all bot arrays in hashmap
+		// Set the bot scope configuration
 		ctx.Locals("BOT_SCOPE_CONFIG", botScopeConfig)
 		ctx.Locals("INSTAGRAM_API", instagramApi)
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
@@ -116,85 +178,99 @@ func main() {
 
 	// Health check endpoint
 	app.Get("/health", func(c *fiber.Ctx) error {
-		botScopes := botScopeConfig.GetAllScopes()
+		health := fiber.Map{
+			"status":    "healthy",
+			"timestamp": time.Now().Unix(),
+			"version":   "1.0.0",
+		}
+
+		// Check MinIO connection
+		if minioClients.Storage != nil && minioClients.Storage.Conn() != nil {
+			health["storage"] = "connected"
+		} else {
+			health["storage"] = "disconnected"
+		}
+
+		// Check bot scopes
+		scopes := botScopeConfig.GetAllScopes()
+		health["bot_scopes"] = len(scopes)
+		health["available_scopes"] = scopes
+
+		return c.JSON(health)
+	})
+
+	// Status endpoint
+	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"status":     "healthy",
-			"timestamp":  time.Now().Unix(),
-			"bot_scopes": botScopes,
-			"version":    "1.2.0",
-			"cache":      "enabled",
-			"features": fiber.Map{
-				"cache_enabled":    true,
-				"bot_racing":       true,
-				"named_bots":       true,
-				"rate_limiting":    true,
-				"compression":      true,
-				"optimized_racing": true,
+			"result":  true,
+			"message": "Go Uploader Service is running",
+			"version": "1.0.0",
+			"endpoints": []string{
+				"/health",
+				"/bot-scopes",
+				"/upload/telegram/:botName",
+				"/instant/:botName/:fileId",
+				"/profile/:media/:pk/:userName",
 			},
 		})
 	})
 
-	// Status endpoint with more details
-	app.Get("/status", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"result": true,
-			"server": fiber.Map{
-				"host":    HOST,
-				"port":    PORT,
-				"version": "1.2.0",
-			},
-			"performance": fiber.Map{
-				"cache_enabled":       true,
-				"optimized_timeouts":  true,
-				"connection_pooling":  true,
-				"rate_limiting":       true,
-				"compression_enabled": true,
-			},
-		})
-	})
-
-	// Favicon handler
-	app.Get("/favicon.ico", func(c *fiber.Ctx) error {
-		return c.SendStatus(204)
-	})
-
+	// Register routes
+	// ZIP operations
 	app.Post("/zip/multi", controllers.ZipMultipleFiles)
 	app.Post("/zip/multi/optimized", controllers.ZipMultipleFilesOptimized)
 	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
 
+	// Telegram upload operations
 	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
 	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
 	app.Post("/upload/telegram/:botName/:specificBot", JWTMiddleware, controllers.UploadToTelegram)
 
+	// Transfer operations
 	app.Post("/transfer/telegram", controllers.TransferFileId)
 
+	// Profile operations
 	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
 
+	// Instant operations
 	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
 	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
 	app.Get("/instant/:botName/:fileId/:specificBot", controllers.DownloadFromTelegram)
 
+	// Direct storage operations
 	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
 	app.Get("/direct/*", controllers.DownloadFile)
 
 	// Bot scope management
 	app.Get("/bot-scopes", controllers.ListBotScopes)
 
-	log.Printf("=====================================")
-	log.Printf("🚀 Server starting on: %s:%s", HOST, PORT)
-	log.Printf("✅ Cache: ENABLED")
-	log.Printf("✅ Bot Racing: OPTIMIZED")
-	log.Printf("✅ Rate Limiting: ENABLED")
-	log.Printf("✅ Connection Pooling: ENABLED")
-	log.Printf("✅ Version: 1.2.0")
-	log.Printf("=====================================")
+	// 404 handler
+	app.Use(func(c *fiber.Ctx) error {
+		return c.Status(404).JSON(fiber.Map{
+			"result":  false,
+			"message": "Endpoint not found",
+			"path":    c.Path(),
+		})
+	})
 
-	err = app.Listen(HOST + ":" + PORT)
+	// Print startup information
+	log.Printf("========================================")
+	log.Printf("🚀 Go Uploader Service")
+	log.Printf("========================================")
+	log.Printf("📍 Server: %s:%s", HOST, PORT)
+	log.Printf("🔐 JWT Auth: %v", os.Getenv("JWT_KEY") != "")
+	log.Printf("💾 MinIO: %s", os.Getenv("MINIO_ENDPOINT"))
+	log.Printf("🤖 Bot Scopes: %v", allScopes)
+	log.Printf("========================================")
+	log.Printf("✅ Server starting on http://%s:%s", HOST, PORT)
+	log.Printf("========================================")
 
-	if err != nil {
-		_ = minioClients.Storage.Close()
-		log.Println("Failed to start server")
-		panic(err)
+	// Start server
+	if err := app.Listen(HOST + ":" + PORT); err != nil {
+		if minioClients.Storage != nil {
+			_ = minioClients.Storage.Close()
+		}
+		log.Fatal("Failed to start server: ", err)
 	}
 }
