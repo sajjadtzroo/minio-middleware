@@ -11,9 +11,11 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
+
 const BaseUrl = "http://94.130.99.214"
 // const BaseUrl = "https://api.telegram.org"
 const ContentType = "application/json"
@@ -89,51 +91,106 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 }
 
 func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
-    cleanPath := strings.TrimPrefix(filePath, "/")
+	cleanPath := strings.TrimPrefix(filePath, "/")
 
-    // برای پروکسی شما - بدون "bot" prefix
-    reqURL := BaseUrl + "/file/" + h.token + "/" + cleanPath
-    log.Printf("📥 Downloading from: %s", reqURL)
+	// چک کن که آیا دانلود مستقیم از تلگرام فعال است
+	directDownload := os.Getenv("TELEGRAM_DIRECT_DOWNLOAD") == "true"
 
-    response, err := h.client.Get(reqURL)
-    if err != nil {
-        return nil, "", fmt.Errorf("request failed: %w", err)
-    }
+	var reqURL string
 
-    defer response.Body.Close()
-    resBody, err := io.ReadAll(response.Body)
-    if err != nil {
-        return nil, "", fmt.Errorf("failed to read response: %w", err)
-    }
+	if directDownload {
+		// دانلود مستقیم از API تلگرام
+		reqURL = "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
+		log.Printf("📥 Direct download from Telegram API: %s", reqURL)
+	} else {
+		// دانلود از پروکسی/سرور محلی
+		reqURL = BaseUrl + "/file/" + h.token + "/" + cleanPath
+		log.Printf("📥 Downloading from proxy server: %s", reqURL)
+	}
 
-    if response.StatusCode != 200 {
-        // اگه proxy فیل شد، API اصلی رو امتحان کن
-        if response.StatusCode == 404 {
-            log.Printf("⚠️ Proxy returned 404, trying official API...")
+	// اولین تلاش
+	response, err := h.client.Get(reqURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("request failed: %w", err)
+	}
 
-            // API اصلی تلگرام نیاز به "bot" داره
-            officialURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
-            response2, err := h.client.Get(officialURL)
-            if err != nil {
-                return nil, "", fmt.Errorf("official API request failed: %w", err)
-            }
-            defer response2.Body.Close()
+	defer response.Body.Close()
 
-            resBody2, _ := io.ReadAll(response2.Body)
-            if response2.StatusCode == 200 {
-                log.Printf("✅ Downloaded from official API")
-                return resBody2, response2.Header.Get("Content-Type"), nil
-            }
+	// اگه موفق بود
+	if response.StatusCode == 200 {
+		resBody, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read response: %w", err)
+		}
 
-            return nil, "", fmt.Errorf("both proxy and official API failed")
-        }
+		resContentType := response.Header.Get("Content-Type")
+		source := "proxy"
+		if directDownload {
+			source = "Telegram API"
+		}
+		log.Printf("✅ Downloaded %d bytes from %s (type: %s)", len(resBody), source, resContentType)
+		return resBody, resContentType, nil
+	}
 
-        return nil, "", fmt.Errorf("download failed (status %d)", response.StatusCode)
-    }
+	// اگه 404 بود و از پروکسی بود
+	if response.StatusCode == 404 && !directDownload {
+		log.Printf("⚠️ Proxy returned 404, checking retry strategy...")
 
-    resContentType := response.Header.Get("Content-Type")
-    log.Printf("✅ Downloaded %d bytes (type: %s)", len(resBody), resContentType)
-    return resBody, resContentType, nil
+		// اگه env variable برای retry تنظیم شده
+		retryOnFail := os.Getenv("TELEGRAM_RETRY_ON_PROXY_FAIL") == "true"
+
+		if retryOnFail {
+			// صبر کن شاید فایل در حال آماده شدن باشه
+			retryCount := 3
+			retryDelayStr := os.Getenv("TELEGRAM_RETRY_DELAY")
+			retryDelay := 2 * time.Second
+			if retryDelayStr != "" {
+				if seconds, err := time.ParseDuration(retryDelayStr + "s"); err == nil {
+					retryDelay = seconds
+				}
+			}
+
+			for i := 1; i <= retryCount; i++ {
+				log.Printf("⏳ Retry %d/%d after %v...", i, retryCount, retryDelay)
+				time.Sleep(retryDelay)
+
+				retryResp, err := h.client.Get(reqURL)
+				if err == nil && retryResp.StatusCode == 200 {
+					defer retryResp.Body.Close()
+					resBody, _ := io.ReadAll(retryResp.Body)
+					log.Printf("✅ Downloaded from proxy on retry %d", i)
+					return resBody, retryResp.Header.Get("Content-Type"), nil
+				}
+				if retryResp != nil {
+					retryResp.Body.Close()
+				}
+			}
+		}
+
+		// اگه retry هم کار نکرد، fallback به API تلگرام
+		fallbackEnabled := os.Getenv("TELEGRAM_FALLBACK_TO_API") != "false" // default true
+
+		if fallbackEnabled {
+			log.Printf("🔄 Falling back to Telegram API...")
+			fallbackURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
+
+			fallbackResp, err := h.client.Get(fallbackURL)
+			if err != nil {
+				return nil, "", fmt.Errorf("fallback to Telegram API also failed: %w", err)
+			}
+			defer fallbackResp.Body.Close()
+
+			if fallbackResp.StatusCode == 200 {
+				resBody, _ := io.ReadAll(fallbackResp.Body)
+				log.Printf("✅ Downloaded from Telegram API (fallback)")
+				return resBody, fallbackResp.Header.Get("Content-Type"), nil
+			}
+
+			return nil, "", fmt.Errorf("both proxy and Telegram API failed (status %d)", fallbackResp.StatusCode)
+		}
+	}
+
+	return nil, "", fmt.Errorf("download failed (status %d) from %s", response.StatusCode, reqURL)
 }
 
 func (h *TelegramAPI) Explode(filePath interface{}) string {
@@ -146,7 +203,7 @@ func (h *TelegramAPI) Explode(filePath interface{}) string {
 
 	log.Printf("🔍 Explode input: %s", filePathStr)
 
-	// لیست کامل پوشه‌های ممکن در تلگرام (ترتیب مهمه!)
+	// لیست کامل پوشه‌های ممکن در تلگرام
 	knownDirs := []string{
 		"photos",        // عکس‌ها
 		"videos",        // ویدیوها
@@ -165,7 +222,7 @@ func (h *TelegramAPI) Explode(filePath interface{}) string {
 	for _, dir := range knownDirs {
 		// چک کن که این پوشه در مسیر وجود داره
 		if strings.Contains(filePathStr, "/"+dir+"/") {
-			// پیدا کردن آخرین موقعیت این پوشه (ممکنه چندبار تکرار شده باشه)
+			// پیدا کردن آخرین موقعیت این پوشه
 			idx := strings.LastIndex(filePathStr, "/"+dir+"/")
 			if idx != -1 {
 				// از شروع پوشه تا انتها رو برگردون (بدون / اول)
@@ -227,17 +284,7 @@ func (h *TelegramAPI) Explode(filePath interface{}) string {
 	if len(nonEmptyParts) >= 2 {
 		// دو بخش آخر رو برگردون
 		result := nonEmptyParts[len(nonEmptyParts)-2] + "/" + nonEmptyParts[len(nonEmptyParts)-1]
-
-		// چک کن که آیا بخش اول یک پوشه شناخته شده هست
-		folderName := nonEmptyParts[len(nonEmptyParts)-2]
-		for _, dir := range knownDirs {
-			if folderName == dir {
-				log.Printf("✅ Using last two parts (recognized folder): %s", result)
-				return result
-			}
-		}
-
-		log.Printf("⚠️ Using last two parts (unrecognized folder): %s", result)
+		log.Printf("✅ Using last two parts: %s", result)
 		return result
 	}
 
@@ -339,7 +386,7 @@ func (h *TelegramAPI) UploadFile(contentType string, fileName string, data []byt
 		return "", fmt.Errorf("telegram API error: %s", description)
 	}
 
-	// استخراج file_id بر اساس نوع فیلد
+	// استخراج file_id
 	result, ok := tgResponse["result"].(map[string]interface{})
 	if !ok {
 		return "", errors.New("invalid response format: missing result")
