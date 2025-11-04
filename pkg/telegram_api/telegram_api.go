@@ -89,54 +89,62 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 }
 
 func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
-	// تمیز کردن مسیر
-	cleanPath := strings.TrimPrefix(filePath, "/")
+    cleanPath := strings.TrimPrefix(filePath, "/")
 
-	reqURL := BaseUrl + "/file/bot" + h.token + "/" + cleanPath
-	log.Printf("📥 Downloading from: %s", reqURL)
+    var reqURL string
 
-	response, err := h.client.Get(reqURL)
-	if err != nil {
-		return nil, "", fmt.Errorf("request failed: %w", err)
-	}
+    // تشخیص پروکسی یا API اصلی
+    if strings.HasPrefix(BaseUrl, "http://94.130.99.214") || strings.Contains(BaseUrl, "statics.trendbot.net") {
+        // برای پروکسی شما - بدون "bot"
+        reqURL = BaseUrl + "/file/" + h.token + "/" + cleanPath
+        log.Printf("📥 Using proxy format: %s", reqURL)
+    } else {
+        // برای API اصلی تلگرام - با "bot"
+        reqURL = BaseUrl + "/file/bot" + h.token + "/" + cleanPath
+        log.Printf("📥 Using official API format: %s", reqURL)
+    }
 
-	defer response.Body.Close()
-	resBody, err := io.ReadAll(response.Body)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to read response: %w", err)
-	}
+    response, err := h.client.Get(reqURL)
+    if err != nil {
+        return nil, "", fmt.Errorf("request failed: %w", err)
+    }
 
-	if response.StatusCode != 200 {
-		// اگه از پروکسی 404 گرفت، سعی کن از API اصلی
-		if response.StatusCode == 404 {
-			log.Printf("⚠️ Proxy returned 404, trying official Telegram API...")
+    defer response.Body.Close()
+    resBody, err := io.ReadAll(response.Body)
+    if err != nil {
+        return nil, "", fmt.Errorf("failed to read response: %w", err)
+    }
 
-			officialURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
-			response2, err := h.client.Get(officialURL)
-			if err != nil {
-				return nil, "", fmt.Errorf("official API also failed: %w", err)
-			}
-			defer response2.Body.Close()
+    if response.StatusCode == 200 {
+        resContentType := response.Header.Get("Content-Type")
+        log.Printf("✅ Downloaded %d bytes (type: %s)", len(resBody), resContentType)
+        return resBody, resContentType, nil
+    }
 
-			resBody2, err := io.ReadAll(response2.Body)
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to read from official API: %w", err)
-			}
+    // اگه 404 شد، با فرمت دیگه امتحان کن
+    if response.StatusCode == 404 {
+        log.Printf("⚠️ Got 404, trying alternative format...")
 
-			if response2.StatusCode == 200 {
-				log.Printf("✅ Downloaded from official API successfully")
-				return resBody2, response2.Header.Get("Content-Type"), nil
-			}
+        // اگه با proxy بود، official رو امتحان کن
+        if strings.Contains(reqURL, "94.130.99.214") {
+            alternativeURL := "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
+            log.Printf("📥 Trying official API: %s", alternativeURL)
+        } else {
+            // اگه official بود، proxy رو امتحان کن (اگه داریم)
+            alternativeURL := "http://94.130.99.214/file/" + h.token + "/" + cleanPath
+            log.Printf("📥 Trying proxy: %s", alternativeURL)
+        }
 
-			return nil, "", fmt.Errorf("both proxy and official API failed (status %d)", response2.StatusCode)
-		}
+        response2, err := h.client.Get(alternativeURL)
+        if err == nil && response2.StatusCode == 200 {
+            defer response2.Body.Close()
+            resBody2, _ := io.ReadAll(response2.Body)
+            log.Printf("✅ Alternative method successful!")
+            return resBody2, response2.Header.Get("Content-Type"), nil
+        }
+    }
 
-		return nil, "", fmt.Errorf("download failed (status %d): %s", response.StatusCode, string(resBody))
-	}
-
-	resContentType := response.Header.Get("Content-Type")
-	log.Printf("✅ Downloaded %d bytes (type: %s)", len(resBody), resContentType)
-	return resBody, resContentType, nil
+    return nil, "", fmt.Errorf("download failed (status %d)", response.StatusCode)
 }
 
 func (h *TelegramAPI) Explode(filePath interface{}) string {
