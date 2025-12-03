@@ -296,9 +296,6 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 	httpClient := &http.Client{
 		Timeout: 60 * time.Second,
-		//Transport: &http.Transport{
-		//	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		//},
 	}
 	picRes, err := httpClient.Do(req)
 	if err != nil {
@@ -371,12 +368,13 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 		})
 	}
 
-	// Validate input data early
+	// Validate input data early - حداقل 2 المان باید باشه (botName, fileId)
+	// المان سوم (username) اختیاری هست
 	for _, data := range requestData {
 		if len(data) < 2 {
 			return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
 				Result:  false,
-				Message: "data format error",
+				Message: "data format error: each item needs at least [botName, fileId]",
 			})
 		}
 	}
@@ -395,6 +393,7 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 	// Channel for coordinating file download and zip writing
 	type fileResult struct {
 		fileID      string
+		fileName    string // username برای نام‌گذاری فایل
 		fileData    []byte
 		contentType string
 		extension   string
@@ -409,22 +408,28 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 		botName := data[0]
 		fileID := data[1]
 
+		// اگه username داده شده از اون استفاده کن، وگرنه از fileID
+		fileName := fileID
+		if len(data) >= 3 && data[2] != "" {
+			fileName = data[2]
+		}
+
 		botAPIs := selectBotAPI(ctx, strings.ToLower(botName))
 
 		downloadWg.Add(1)
-		go func(fileID, botName string) {
+		go func(fileID, fileName, botName string) {
 			defer downloadWg.Done()
 
 			// Download file with racing
 			filePath, selectedBotAPI, err := raceGetFile(botAPIs, fileID)
 			if err != nil {
-				fileResultChan <- fileResult{fileID: fileID, err: err}
+				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: err}
 				return
 			}
 
 			fileData, resContentType, err := raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePath.(string)))
 			if err != nil {
-				fileResultChan <- fileResult{fileID: fileID, err: err}
+				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: err}
 				return
 			}
 
@@ -438,12 +443,13 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 
 			fileResultChan <- fileResult{
 				fileID:      fileID,
+				fileName:    fileName,
 				fileData:    fileData,
 				contentType: mimeType,
 				extension:   fileExtension,
 				err:         nil,
 			}
-		}(fileID, botName)
+		}(fileID, fileName, botName)
 	}
 
 	// Goroutine to close the channel when all downloads are done
@@ -468,22 +474,22 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 				return
 			}
 
-			// Create zip entry and write file data
-			zipFileWriter, err := zipWriter.Create(result.fileID + "." + result.extension)
+			// Create zip entry and write file data - استفاده از fileName به جای fileID
+			zipFileWriter, err := zipWriter.Create(result.fileName + "." + result.extension)
 			if err != nil {
-				log.Printf("Error creating zip entry for %s: %v", result.fileID, err)
+				log.Printf("Error creating zip entry for %s: %v", result.fileName, err)
 				_ = pipeWriter.CloseWithError(err)
 				return
 			}
 
 			if _, err := zipFileWriter.Write(result.fileData); err != nil {
-				log.Printf("Error writing file data for %s: %v", result.fileID, err)
+				log.Printf("Error writing file data for %s: %v", result.fileName, err)
 				_ = pipeWriter.CloseWithError(err)
 				return
 			}
 
 			filesProcessed++
-			log.Printf("Added file %s to zip (%d/%d)", result.fileID, filesProcessed, len(requestData))
+			log.Printf("Added file %s (ID: %s) to zip (%d/%d)", result.fileName, result.fileID, filesProcessed, len(requestData))
 		}
 
 		log.Printf("Successfully processed all %d files for zip", filesProcessed)
@@ -521,12 +527,13 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 		})
 	}
 
-	// Validate input data early
+	// Validate input data early - حداقل 2 المان باید باشه (botName, fileId)
+	// المان سوم (username) اختیاری هست
 	for _, data := range requestData {
 		if len(data) < 2 {
 			return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
 				Result:  false,
-				Message: "data format error",
+				Message: "data format error: each item needs at least [botName, fileId]",
 			})
 		}
 	}
@@ -553,11 +560,12 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 	// Channel for coordinating file download and zip writing
 	type fileResult struct {
 		fileID      string
+		fileName    string // username برای نام‌گذاری فایل
 		fileData    []byte
 		contentType string
 		extension   string
-		err         error
 		size        int64
+		err         error
 	}
 
 	fileResultChan := make(chan fileResult, len(requestData))
@@ -574,8 +582,14 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 		botName := data[0]
 		fileID := data[1]
 
+		// اگه username داده شده از اون استفاده کن، وگرنه از fileID
+		fileName := fileID
+		if len(data) >= 3 && data[2] != "" {
+			fileName = data[2]
+		}
+
 		downloadWg.Add(1)
-		go func(fileID, botName string, index int) {
+		go func(fileID, fileName, botName string, index int) {
 			defer downloadWg.Done()
 
 			// Acquire semaphore slot
@@ -583,11 +597,11 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 			defer func() { <-semaphore }()
 
 			downloadProgress.Store(fileID, "downloading")
-			log.Printf("Starting download %d/%d: %s", index+1, totalFiles, fileID)
+			log.Printf("Starting download %d/%d: %s (name: %s)", index+1, totalFiles, fileID, fileName)
 
 			botAPIs := selectBotAPI(ctx, strings.ToLower(botName))
 			if len(botAPIs) == 0 {
-				fileResultChan <- fileResult{fileID: fileID, err: fmt.Errorf("no bot APIs available for %s", botName)}
+				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: fmt.Errorf("no bot APIs available for %s", botName)}
 				return
 			}
 
@@ -629,7 +643,7 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 
 			if downloadErr != nil {
 				downloadProgress.Store(fileID, "failed")
-				fileResultChan <- fileResult{fileID: fileID, err: downloadErr}
+				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: downloadErr}
 				return
 			}
 
@@ -645,17 +659,18 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 			}
 
 			downloadProgress.Store(fileID, "completed")
-			log.Printf("Download completed %d/%d: %s (%d bytes)", index+1, totalFiles, fileID, len(fileData))
+			log.Printf("Download completed %d/%d: %s as %s (%d bytes)", index+1, totalFiles, fileID, fileName, len(fileData))
 
 			fileResultChan <- fileResult{
 				fileID:      fileID,
+				fileName:    fileName,
 				fileData:    fileData,
 				contentType: mimeType,
 				extension:   fileExtension,
 				size:        int64(len(fileData)),
 				err:         nil,
 			}
-		}(fileID, botName, i)
+		}(fileID, fileName, botName, i)
 	}
 
 	// Goroutine to close the channel when all downloads are done
@@ -686,13 +701,13 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 				return
 			}
 
-			// Create zip entry with optimized compression
+			// Create zip entry with optimized compression - استفاده از fileName
 			zipFileWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
-				Name:   result.fileID + "." + result.extension,
+				Name:   result.fileName + "." + result.extension,
 				Method: zip.Deflate, // Use compression
 			})
 			if err != nil {
-				log.Printf("Error creating zip entry for %s: %v", result.fileID, err)
+				log.Printf("Error creating zip entry for %s: %v", result.fileName, err)
 				zipWriteComplete <- err
 				return
 			}
@@ -702,15 +717,15 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 			reader := bytes.NewReader(result.fileData)
 			written, err := io.CopyBuffer(zipFileWriter, reader, make([]byte, chunkSize))
 			if err != nil {
-				log.Printf("Error writing file data for %s: %v", result.fileID, err)
+				log.Printf("Error writing file data for %s: %v", result.fileName, err)
 				zipWriteComplete <- err
 				return
 			}
 
 			filesProcessed++
 			totalSize += result.size
-			log.Printf("Added file %s to zip (%d/%d) - %d bytes, total: %d bytes",
-				result.fileID, filesProcessed, totalFiles, written, totalSize)
+			log.Printf("Added file %s (ID: %s) to zip (%d/%d) - %d bytes, total: %d bytes",
+				result.fileName, result.fileID, filesProcessed, totalFiles, written, totalSize)
 		}
 
 		log.Printf("Successfully processed all %d files for zip, total size: %d bytes", filesProcessed, totalSize)
@@ -759,6 +774,10 @@ func GetZipPerformanceInfo(ctx *fiber.Ctx) error {
 			"Limit concurrent requests to prevent resource exhaustion",
 			"Consider implementing caching for frequently requested files",
 			"Monitor memory usage with large file sets",
+		},
+		"data_format": []string{
+			"[botName, fileId] - اسم فایل با fileId ذخیره میشه",
+			"[botName, fileId, username] - اسم فایل با username ذخیره میشه",
 		},
 	})
 }
