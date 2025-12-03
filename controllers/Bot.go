@@ -555,6 +555,7 @@ func ListBotScopes(ctx *fiber.Ctx) error {
 		})
 	}
 
+
 	config := botScopeConfig.(*config.BotScopeConfiguration)
 	scopeDetails := config.GetAllScopeDetails()
 
