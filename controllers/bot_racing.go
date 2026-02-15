@@ -5,11 +5,23 @@ import (
 	"go-uploader/config"
 	"go-uploader/pkg/telegram_api"
 	"log"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+// getMaxRacingBots reads MAX_RACING_BOTS from env, falling back to the given default
+func getMaxRacingBots(defaultMax int) int {
+	if v := os.Getenv("MAX_RACING_BOTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMax
+}
 
 // raceGetFileResult holds the result of a bot API GetFile operation
 type raceGetFileResult struct {
@@ -127,8 +139,8 @@ func raceGetFileWithNamesOptimized(namedBots []config.NamedBot, fileId string) (
 		return nil, nil, "", fiber.NewError(500, "No named bots available")
 	}
 
-	// Use only first 3 bots for speed
-	maxBots := 3
+	// Use configurable max bots for speed
+	maxBots := getMaxRacingBots(3)
 	if len(namedBots) < maxBots {
 		maxBots = len(namedBots)
 	}
@@ -276,8 +288,8 @@ func raceDownloadFileWithNamesOptimized(namedBots []config.NamedBot, filePathStr
 		return nil, "", "", fiber.NewError(500, "No named bots available")
 	}
 
-	// Use only first 2 bots for download
-	maxBots := 2
+	// Use configurable max bots for download
+	maxBots := getMaxRacingBots(2)
 	if len(namedBots) < maxBots {
 		maxBots = len(namedBots)
 	}

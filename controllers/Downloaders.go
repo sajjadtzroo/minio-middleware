@@ -65,7 +65,14 @@ func DownloadFile(ctx *fiber.Ctx) error {
 					})
 				}
 
-				data, _ := io.ReadAll(object)
+				data, readErr := io.ReadAll(object)
+				if readErr != nil {
+					_ = object.Close()
+					return ctx.Status(500).JSON(models.GenericResponse{
+						Result:  false,
+						Message: fmt.Sprintf("failed to read file data: %v", readErr),
+					})
+				}
 				ctx.Set("Content-Type", http.DetectContentType(data))
 				_ = object.Close()
 				return ctx.Status(200).Send(data)
@@ -175,8 +182,15 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 				Message: err.Error(),
 			})
 		}
+		defer res.Body.Close()
 
-		body, _ := io.ReadAll(res.Body)
+		body, readErr := io.ReadAll(res.Body)
+		if readErr != nil {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: fmt.Sprintf("failed to read tgObserver response: %v", readErr),
+			})
+		}
 		if res.StatusCode != 200 {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -320,7 +334,13 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(picRes.Body)
-	bodyRaw, _ := io.ReadAll(picRes.Body)
+	bodyRaw, readErr := io.ReadAll(picRes.Body)
+	if readErr != nil {
+		return ctx.Status(500).JSON(models.GenericResponse{
+			Result:  false,
+			Message: fmt.Sprintf("failed to read Instagram response: %v", readErr),
+		})
+	}
 
 	if picRes.StatusCode != 200 {
 		return ctx.Status(500).JSON(models.GenericResponse{
@@ -456,7 +476,13 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 				return
 			}
 
-			fileData, resContentType, err := raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePath.(string)))
+			filePathStr, ok := filePath.(string)
+			if !ok {
+				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: fmt.Errorf("unexpected filePath type: %T", filePath)}
+				return
+			}
+
+			fileData, resContentType, err := raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePathStr))
 			if err != nil {
 				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: err}
 				return
@@ -468,7 +494,10 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 				mimeType = resContentType
 			}
 
-			fileExtension := strings.Split(mimeType, "/")[1]
+			fileExtension := "bin"
+			if parts := strings.Split(mimeType, "/"); len(parts) == 2 {
+				fileExtension = parts[1]
+			}
 
 			fileResultChan <- fileResult{
 				fileID:      fileID,
@@ -657,7 +686,12 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 				}
 
 				// Download file data with racing
-				fileData, resContentType, err = raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePath.(string)))
+				filePathStr, ok := filePath.(string)
+				if !ok {
+					downloadErr = fmt.Errorf("unexpected filePath type: %T", filePath)
+					break
+				}
+				fileData, resContentType, err = raceDownloadFile(botAPIs, selectedBotAPI.Explode(filePathStr))
 				if err != nil {
 					downloadErr = err
 					if attempt == 2 {

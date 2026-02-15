@@ -76,7 +76,10 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 	}
 
 	defer response.Body.Close()
-	resBody, _ := io.ReadAll(response.Body)
+	resBody, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read GetFile response: %w", readErr)
+	}
 	if response.StatusCode != 200 {
 		return "", errors.New("telegram failed " + string(resBody))
 	}
@@ -158,7 +161,11 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 				retryResp, err := h.client.Get(reqURL)
 				if err == nil && retryResp.StatusCode == 200 {
 					defer retryResp.Body.Close()
-					resBody, _ := io.ReadAll(retryResp.Body)
+					resBody, retryReadErr := io.ReadAll(retryResp.Body)
+					if retryReadErr != nil {
+						log.Printf("⚠️ Retry %d read failed: %v", i, retryReadErr)
+						continue
+					}
 					log.Printf("✅ Downloaded from proxy on retry %d", i)
 					return resBody, retryResp.Header.Get("Content-Type"), nil
 				}
@@ -182,7 +189,10 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 			defer fallbackResp.Body.Close()
 
 			if fallbackResp.StatusCode == 200 {
-				resBody, _ := io.ReadAll(fallbackResp.Body)
+				resBody, fbReadErr := io.ReadAll(fallbackResp.Body)
+				if fbReadErr != nil {
+					return nil, "", fmt.Errorf("failed to read fallback response: %w", fbReadErr)
+				}
 				log.Printf("✅ Downloaded from Telegram API (fallback)")
 				return resBody, fallbackResp.Header.Get("Content-Type"), nil
 			}
@@ -444,7 +454,10 @@ func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (st
 	}
 
 	defer response.Body.Close()
-	resBody, _ := io.ReadAll(response.Body)
+	resBody, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read GetFileWithContext response: %w", readErr)
+	}
 	if response.StatusCode != 200 {
 		return "", errors.New("telegram failed " + string(resBody))
 	}
