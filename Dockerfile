@@ -5,8 +5,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY .env.server .env
 COPY . .
+COPY .env.server .env
 
 # Build the Go app
 RUN go build -o main .

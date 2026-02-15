@@ -5,24 +5,9 @@ import (
 	"time"
 )
 
-type FileDetails struct {
-	Format string
-	Id     string
-}
-
 var ValidBuckets = []string{"instagram", "telegram", "influencer", "tracker"}
 
-const (
-	MaxImageSize = 11 * 1024 * 1024 // 11MB
-	MinImageSize = 10 * 1000        // 10 KB
-)
-
 var (
-	ImageAllowedFormats = map[string]bool{
-		"image/jpeg": true,
-		"image/png":  true,
-	}
-
 	ImageFileTypes = map[string]string{
 		"image/jpeg": "jpeg",
 		"image/jpg":  "jpg",
