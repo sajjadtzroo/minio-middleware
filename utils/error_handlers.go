@@ -2,6 +2,8 @@ package utils
 
 import (
 	"errors"
+	"log"
+
 	"github.com/gofiber/fiber/v2"
 	"go-uploader/models"
 )
@@ -15,10 +17,12 @@ func CustomErrorHandler(ctx *fiber.Ctx, err error) error {
 	}
 
 	// Send custom error response
-	err = ctx.Status(code).JSON(models.GenericResponse{
+	if jsonErr := ctx.Status(code).JSON(models.GenericResponse{
 		Result:  false,
 		Message: err.Error(),
-	})
+	}); jsonErr != nil {
+		log.Printf("Failed to send error response: %v", jsonErr)
+	}
 
 	return nil
 }
@@ -32,10 +36,12 @@ func JwtErrorHandler(ctx *fiber.Ctx, err error) error {
 	}
 
 	// Send custom error response
-	err = ctx.Status(code).JSON(models.GenericResponse{
+	if jsonErr := ctx.Status(code).JSON(models.GenericResponse{
 		Result:  false,
 		Message: err.Error(),
-	})
+	}); jsonErr != nil {
+		log.Printf("Failed to send error response: %v", jsonErr)
+	}
 
 	return nil
 }
