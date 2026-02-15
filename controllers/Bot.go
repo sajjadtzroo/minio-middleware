@@ -23,12 +23,49 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
-func selectBotAPI(ctx *fiber.Ctx, botName string) []*telegram_api.TelegramAPI {
-	if botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG"); botScopeConfig != nil {
-		config := botScopeConfig.(*config.BotScopeConfiguration)
-		return config.GetScope(botName)
+// getLocal safely retrieves a typed value from fiber context locals
+func getLocal[T any](ctx *fiber.Ctx, key string) (T, error) {
+	val, ok := ctx.Locals(key).(T)
+	if !ok {
+		var zero T
+		return zero, fiber.NewError(500, fmt.Sprintf("%s not configured", key))
+	}
+	return val, nil
+}
+
+// validateExternalURL checks that a URL is safe to fetch (no SSRF)
+func validateExternalURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	// Only allow http and https
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme: %s", parsed.Scheme)
+	}
+	// Block private/internal IPs
+	host := parsed.Hostname()
+	blockedPrefixes := []string{"10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.", "127.", "0.", "169.254."}
+	for _, prefix := range blockedPrefixes {
+		if strings.HasPrefix(host, prefix) {
+			return fmt.Errorf("URL targets private network: %s", host)
+		}
+	}
+	blockedHosts := []string{"localhost", "metadata.google.internal", "metadata.internal"}
+	for _, blocked := range blockedHosts {
+		if strings.EqualFold(host, blocked) {
+			return fmt.Errorf("URL targets blocked host: %s", host)
+		}
 	}
 	return nil
+}
+
+func selectBotAPI(ctx *fiber.Ctx, botName string) []*telegram_api.TelegramAPI {
+	botScopeConfig, ok := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	if !ok || botScopeConfig == nil {
+		return nil
+	}
+	return botScopeConfig.GetScope(botName)
 }
 
 // logBotAPIs logs bot API information in a safe and readable format
@@ -151,7 +188,10 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	specificBotFromURL := ctx.Params("specificBot", "")
 	specificBotFromQuery := ctx.Query("bot", "")
 
-	minioClient := ctx.Locals("minio").(*config.MinIOClients)
+	minioClient, err := getLocal[*config.MinIOClients](ctx, "minio")
+	if err != nil {
+		return err
+	}
 
 	// ✅ IMPORTANT: Check MinIO cache first
 	log.Printf("🔍 Checking MinIO cache for FileID: %s in bucket: %s", fileId, botName)
@@ -185,7 +225,7 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 				log.Printf("⚠️ Failed to get object stat, continuing: %v", err)
 			}
 
-			data, readErr := io.ReadAll(object)
+			data, readErr := io.ReadAll(io.LimitReader(object, maxDownloadSize))
 			_ = object.Close()
 
 			if readErr != nil {
@@ -226,7 +266,10 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	log.Printf("❌ Cache MISS for FileID: %s - Downloading from Telegram", fileId)
 
 	// Get named bots for bot selection
-	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	botScopeConfig, err := getLocal[*config.BotScopeConfiguration](ctx, "BOT_SCOPE_CONFIG")
+	if err != nil {
+		return err
+	}
 	namedBots := botScopeConfig.GetNamedBots(botName)
 	logNamedBots(namedBots, botName)
 
@@ -250,7 +293,6 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 	var resContentType string
 	var usedBotName string
 	var downloadBotName string
-	var err error
 
 	if useRacing {
 		// Use optimized racing mode for GetFile
@@ -413,7 +455,10 @@ func UploadToTelegram(ctx *fiber.Ctx) error {
 	}
 
 	// Get named bots for specific bot selection
-	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	botScopeConfig, err := getLocal[*config.BotScopeConfiguration](ctx, "BOT_SCOPE_CONFIG")
+	if err != nil {
+		return err
+	}
 	namedBots := botScopeConfig.GetNamedBots(botName)
 	logNamedBots(namedBots, botName)
 
@@ -475,12 +520,17 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 		})
 	}
 
-	requestURI, err := url.ParseRequestURI(body["link"])
+	link := body["link"]
+	requestURI, err := url.ParseRequestURI(link)
 	if err != nil {
 		return ctx.Status(400).JSON(models.GenericResponse{
 			Result:  false,
 			Message: "link is invalid",
 		})
+	}
+
+	if err := validateExternalURL(link); err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{Result: false, Message: err.Error()})
 	}
 
 	req, err := http.NewRequestWithContext(ctx.UserContext(), "GET", requestURI.String(), nil)
@@ -509,7 +559,7 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 	splitUrl := strings.Split(body["link"], "/")
 	fileName := splitUrl[len(splitUrl)-1]
 
-	resBody, err := io.ReadAll(res.Body)
+	resBody, err := io.ReadAll(io.LimitReader(res.Body, maxDownloadSize))
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -520,7 +570,10 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 	mimeType := http.DetectContentType(resBody)
 
 	// Get named bots for specific bot selection
-	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
+	botScopeConfig, err := getLocal[*config.BotScopeConfiguration](ctx, "BOT_SCOPE_CONFIG")
+	if err != nil {
+		return err
+	}
 	namedBots := botScopeConfig.GetNamedBots(botName)
 	logNamedBots(namedBots, botName)
 
@@ -551,17 +604,12 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 
 // ListBotScopes returns all available bot scopes with their named bots
 func ListBotScopes(ctx *fiber.Ctx) error {
-	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG")
-	if botScopeConfig == nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: "Bot scope configuration not found",
-		})
+	botScopeConfig, err := getLocal[*config.BotScopeConfiguration](ctx, "BOT_SCOPE_CONFIG")
+	if err != nil {
+		return err
 	}
 
-
-	config := botScopeConfig.(*config.BotScopeConfiguration)
-	scopeDetails := config.GetAllScopeDetails()
+	scopeDetails := botScopeConfig.GetAllScopeDetails()
 
 	return ctx.Status(200).JSON(fiber.Map{
 		"result": true,

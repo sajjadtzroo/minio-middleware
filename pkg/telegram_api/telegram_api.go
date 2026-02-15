@@ -17,6 +17,11 @@ import (
 
 const ContentType = "application/json"
 
+const (
+	maxAPIResponseSize  = 1 * 1024 * 1024  // 1 MB for JSON API responses
+	maxFileDownloadSize = 50 * 1024 * 1024 // 50 MB for file downloads
+)
+
 func getBaseURL() string {
 	if url := os.Getenv("TELEGRAM_API_BASE_URL"); url != "" {
 		return strings.TrimRight(url, "/")
@@ -30,6 +35,10 @@ type TelegramAPI struct {
 }
 
 func New(token string) *TelegramAPI {
+	if token == "" {
+		log.Printf("⚠️ TelegramAPI created with empty token")
+	}
+
 	client := &http.Client{
 		Timeout: 300 * time.Second,
 	}
@@ -48,6 +57,11 @@ func (h *TelegramAPI) String() string {
 		return fmt.Sprintf("TelegramAPI{token: ...%s}", h.token[len(h.token)-4:])
 	}
 	return "TelegramAPI{token: ***}"
+}
+
+// redactURL removes the bot token from URLs for safe logging
+func (h *TelegramAPI) redactURL(url string) string {
+	return strings.Replace(url, h.token, "***", -1)
 }
 
 type GetFileResponse struct {
@@ -76,7 +90,7 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 	}
 
 	defer response.Body.Close()
-	resBody, readErr := io.ReadAll(response.Body)
+	resBody, readErr := io.ReadAll(io.LimitReader(response.Body, maxAPIResponseSize))
 	if readErr != nil {
 		return "", fmt.Errorf("failed to read GetFile response: %w", readErr)
 	}
@@ -88,6 +102,10 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 	errJson := json.Unmarshal(resBody, &result)
 	if errJson != nil {
 		return "", errJson
+	}
+
+	if !result.Ok {
+		return "", fmt.Errorf("telegram GetFile failed: %s", result.Description)
 	}
 
 	log.Printf("📁 GetFile successful: %s (size: %d bytes)", result.Result.FilePath, result.Result.FileSize)
@@ -105,11 +123,11 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 	if directDownload {
 		// دانلود مستقیم از API تلگرام
 		reqURL = "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
-		log.Printf("📥 Direct download from Telegram API: %s", reqURL)
+		log.Printf("📥 Direct download from Telegram API: %s", h.redactURL(reqURL))
 	} else {
 		// دانلود از پروکسی/سرور محلی
 		reqURL = getBaseURL() + "/file/" + h.token + "/" + cleanPath
-		log.Printf("📥 Downloading from proxy server: %s", reqURL)
+		log.Printf("📥 Downloading from proxy server: %s", h.redactURL(reqURL))
 	}
 
 	// اولین تلاش
@@ -122,7 +140,7 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 
 	// اگه موفق بود
 	if response.StatusCode == 200 {
-		resBody, err := io.ReadAll(response.Body)
+		resBody, err := io.ReadAll(io.LimitReader(response.Body, maxFileDownloadSize))
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to read response: %w", err)
 		}
@@ -160,8 +178,8 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 
 				retryResp, err := h.client.Get(reqURL)
 				if err == nil && retryResp.StatusCode == 200 {
-					defer retryResp.Body.Close()
-					resBody, retryReadErr := io.ReadAll(retryResp.Body)
+					resBody, retryReadErr := io.ReadAll(io.LimitReader(retryResp.Body, maxFileDownloadSize))
+					retryResp.Body.Close()
 					if retryReadErr != nil {
 						log.Printf("⚠️ Retry %d read failed: %v", i, retryReadErr)
 						continue
@@ -189,7 +207,7 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 			defer fallbackResp.Body.Close()
 
 			if fallbackResp.StatusCode == 200 {
-				resBody, fbReadErr := io.ReadAll(fallbackResp.Body)
+				resBody, fbReadErr := io.ReadAll(io.LimitReader(fallbackResp.Body, maxFileDownloadSize))
 				if fbReadErr != nil {
 					return nil, "", fmt.Errorf("failed to read fallback response: %w", fbReadErr)
 				}
@@ -201,7 +219,7 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 		}
 	}
 
-	return nil, "", fmt.Errorf("download failed (status %d) from %s", response.StatusCode, reqURL)
+	return nil, "", fmt.Errorf("download failed (status %d) from %s", response.StatusCode, h.redactURL(reqURL))
 }
 
 func (h *TelegramAPI) Explode(filePath interface{}) string {
@@ -375,7 +393,7 @@ func (h *TelegramAPI) UploadFile(contentType string, fileName string, data []byt
 	}
 
 	defer response.Body.Close()
-	resBody, err := io.ReadAll(response.Body)
+	resBody, err := io.ReadAll(io.LimitReader(response.Body, maxAPIResponseSize))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
@@ -454,7 +472,7 @@ func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (st
 	}
 
 	defer response.Body.Close()
-	resBody, readErr := io.ReadAll(response.Body)
+	resBody, readErr := io.ReadAll(io.LimitReader(response.Body, maxAPIResponseSize))
 	if readErr != nil {
 		return "", fmt.Errorf("failed to read GetFileWithContext response: %w", readErr)
 	}
@@ -465,6 +483,10 @@ func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (st
 	var result GetFileResponse
 	if err := json.Unmarshal(resBody, &result); err != nil {
 		return "", err
+	}
+
+	if !result.Ok {
+		return "", fmt.Errorf("telegram GetFile failed: %s", result.Description)
 	}
 
 	log.Printf("📁 GetFileWithContext successful: %s (size: %d bytes)", result.Result.FilePath, result.Result.FileSize)
@@ -495,7 +517,7 @@ func (h *TelegramAPI) DownloadFileWithContext(ctx context.Context, filePath stri
 	defer response.Body.Close()
 
 	if response.StatusCode == 200 {
-		resBody, err := io.ReadAll(response.Body)
+		resBody, err := io.ReadAll(io.LimitReader(response.Body, maxFileDownloadSize))
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to read response: %w", err)
 		}

@@ -151,7 +151,8 @@ func main() {
 			if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
 				return origins
 			}
-			return "*"
+			log.Printf("⚠️ CORS_ALLOWED_ORIGINS not set, defaulting to localhost only")
+			return "http://localhost:3000"
 		}(),
 		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
 		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
@@ -206,7 +207,6 @@ func main() {
 		// Check bot scopes
 		scopes := botScopeConfig.GetAllScopes()
 		health["bot_scopes"] = len(scopes)
-		health["available_scopes"] = scopes
 
 		return c.JSON(health)
 	})
@@ -217,22 +217,15 @@ func main() {
 			"result":  true,
 			"message": "Go Uploader Service is running",
 			"version": "1.0.0",
-			"endpoints": []string{
-				"/health",
-				"/bot-scopes",
-				"/upload/telegram/:botName",
-				"/instant/:botName/:fileId",
-				"/profile/:media/:pk/:userName",
-			},
 		})
 	})
 
 	// ZIP operations
-	app.Post("/zip/multi", controllers.ZipMultipleFiles)
+	app.Post("/zip/multi", JWTMiddleware, controllers.ZipMultipleFiles)
 	// Alternative high-performance endpoint
-	app.Post("/zip/multi/optimized", controllers.ZipMultipleFilesOptimized)
+	app.Post("/zip/multi/optimized", JWTMiddleware, controllers.ZipMultipleFilesOptimized)
 	// Performance monitoring endpoint
-	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
+	app.Get("/zip/performance", JWTMiddleware, controllers.GetZipPerformanceInfo)
 
 	// Telegram upload operations
 	app.Post("/upload/telegram/link/:botName", uploadLimiter, JWTMiddleware, controllers.UploadToTelegramViaLink)
@@ -243,16 +236,16 @@ func main() {
 	app.Post("/transfer/telegram", uploadLimiter, JWTMiddleware, controllers.TransferFileId)
 
 	// Profile operations
-	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
+	app.Get("/profile/:media/:pk/:userName", uploadLimiter, controllers.DownloadProfile)
 
 	// Instant operations
-	app.Post("/instant/link", controllers.DownloadFromLinkAndUpload)
-	app.Get("/instant/:botName/:fileId", controllers.DownloadFromTelegram)
-	app.Get("/instant/:botName/:fileId/:specificBot", controllers.DownloadFromTelegram)
+	app.Post("/instant/link", JWTMiddleware, controllers.DownloadFromLinkAndUpload)
+	app.Get("/instant/:botName/:fileId", uploadLimiter, controllers.DownloadFromTelegram)
+	app.Get("/instant/:botName/:fileId/:specificBot", uploadLimiter, controllers.DownloadFromTelegram)
 
 	// Direct storage operations
 	app.Post("/direct/:bucketName", JWTMiddleware, controllers.UploadFile)
-	app.Get("/direct/*", controllers.DownloadFile)
+	app.Get("/direct/*", JWTMiddleware, controllers.DownloadFile)
 
 	// Bot scope management
 	app.Get("/bot-scopes", JWTMiddleware, controllers.ListBotScopes)

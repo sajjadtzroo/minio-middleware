@@ -11,11 +11,13 @@ import (
 	"go-uploader/config"
 	"go-uploader/models"
 	"go-uploader/pkg/instagram_api"
+	"go-uploader/utils"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +26,9 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/minio/minio-go/v7"
 )
+
+const maxDownloadSize = 512 * 1024 * 1024 // 512 MB
+const maxAPIResponseSize = 1 * 1024 * 1024 // 1 MB for JSON API responses
 
 func DownloadFile(ctx *fiber.Ctx) error {
 	reqPath := strings.Split(ctx.Path(), "/")
@@ -39,11 +44,20 @@ func DownloadFile(ctx *fiber.Ctx) error {
 	}
 
 	bucket := reqPath[2]
+	if !slices.Contains(utils.ValidBuckets, bucket) {
+		return ctx.Status(403).JSON(models.GenericResponse{
+			Result:  false,
+			Message: "Access denied: invalid bucket",
+		})
+	}
 	reqPath = slices.Delete(reqPath, 0, 3)
 
 	path := strings.Join(reqPath, "/")
 
-	minioClient := ctx.Locals("minio").(*config.MinIOClients)
+	minioClient, err := getLocal[*config.MinIOClients](ctx, "minio")
+	if err != nil {
+		return err
+	}
 	objectInfo := minioClient.Storage.Conn().ListObjects(ctx.UserContext(), bucket, minio.ListObjectsOptions{
 		Prefix:    path,
 		Recursive: true,
@@ -65,7 +79,7 @@ func DownloadFile(ctx *fiber.Ctx) error {
 					})
 				}
 
-				data, readErr := io.ReadAll(object)
+				data, readErr := io.ReadAll(io.LimitReader(object, maxDownloadSize))
 				if readErr != nil {
 					_ = object.Close()
 					return ctx.Status(500).JSON(models.GenericResponse{
@@ -101,7 +115,10 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	media := ctx.Params("media")
 	userName := ctx.Params("username")
 
-	minioClient := ctx.Locals("minio").(*config.MinIOClients)
+	minioClient, err := getLocal[*config.MinIOClients](ctx, "minio")
+	if err != nil {
+		return err
+	}
 	var bucketName string
 	if media == "telegram" {
 		bucketName = "profile-telegram"
@@ -134,7 +151,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 					})
 				}
 
-				data, err := io.ReadAll(object)
+				data, err := io.ReadAll(io.LimitReader(object, maxDownloadSize))
 				if err != nil {
 					cancelMinIOGet()
 					return ctx.Status(500).JSON(models.GenericResponse{
@@ -184,7 +201,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 		defer res.Body.Close()
 
-		body, readErr := io.ReadAll(res.Body)
+		body, readErr := io.ReadAll(io.LimitReader(res.Body, maxAPIResponseSize))
 		if readErr != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -227,6 +244,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 				Message: err.Error(),
 			})
 		}
+		defer photoRes.Body.Close()
 
 		if photoRes.StatusCode != 200 {
 			return ctx.Status(500).JSON(models.GenericResponse{
@@ -235,7 +253,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 			})
 		}
 
-		responseFileBody, err := io.ReadAll(photoRes.Body)
+		responseFileBody, err := io.ReadAll(io.LimitReader(photoRes.Body, maxDownloadSize))
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -276,7 +294,10 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		return ctx.Status(200).Send(responseFileBody)
 	}
 
-	instaApi := ctx.Locals("INSTAGRAM_API").(*instagram_api.InstagramApi)
+	instaApi, err := getLocal[*instagram_api.InstagramApi](ctx, "INSTAGRAM_API")
+	if err != nil {
+		return err
+	}
 	profilePicUrl, err := instaApi.GetProfile(userName)
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
@@ -285,7 +306,10 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		})
 	}
 
-	snitchConfig := ctx.Locals("SNITCH_CONFIG").(*config.SnitchConfiguration)
+	snitchConfig, err := getLocal[*config.SnitchConfiguration](ctx, "SNITCH_CONFIG")
+	if err != nil {
+		return err
+	}
 	instagramReqCtx, cancelInstagramReq := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 	defer cancelInstagramReq()
 
@@ -334,7 +358,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	defer func(Body io.ReadCloser) {
 		_ = Body.Close()
 	}(picRes.Body)
-	bodyRaw, readErr := io.ReadAll(picRes.Body)
+	bodyRaw, readErr := io.ReadAll(io.LimitReader(picRes.Body, maxDownloadSize))
 	if readErr != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -533,7 +557,8 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 			}
 
 			// Create zip entry and write file data - استفاده از fileName به جای fileID
-			zipFileWriter, err := zipWriter.Create(result.fileName + "." + result.extension)
+			safeName := filepath.Base(result.fileName)
+			zipFileWriter, err := zipWriter.Create(safeName + "." + result.extension)
 			if err != nil {
 				log.Printf("Error creating zip entry for %s: %v", result.fileName, err)
 				_ = pipeWriter.CloseWithError(err)
@@ -766,8 +791,9 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 			}
 
 			// Create zip entry with optimized compression - استفاده از fileName
+			safeName := filepath.Base(result.fileName)
 			zipFileWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
-				Name:   result.fileName + "." + result.extension,
+				Name:   safeName + "." + result.extension,
 				Method: zip.Deflate, // Use compression
 			})
 			if err != nil {

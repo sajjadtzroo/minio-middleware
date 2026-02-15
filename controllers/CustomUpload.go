@@ -71,7 +71,10 @@ func UploadFile(ctx *fiber.Ctx) error {
 		})
 	}
 
-	minioClient := ctx.Locals("minio").(*config.MinIOClients)
+	minioClient, err := getLocal[*config.MinIOClients](ctx, "minio")
+	if err != nil {
+		return err
+	}
 	filename := utils.CreateFilePath(hex.EncodeToString(fileId), utils.ImageFileTypes[file.Header.Get("Content-Type")])
 	_, err = minioClient.Storage.Conn().PutObject(
 		ctx.UserContext(),
@@ -110,6 +113,10 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 			Result:  false,
 			Message: err.Error(),
 		})
+	}
+
+	if err := validateExternalURL(body.Link); err != nil {
+		return ctx.Status(400).JSON(models.GenericResponse{Result: false, Message: err.Error()})
 	}
 
 	if !slices.Contains(utils.ValidBuckets, body.Bucket) {
@@ -156,7 +163,7 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 		_ = Body.Close()
 	}(res.Body)
 
-	resBody, err := io.ReadAll(res.Body)
+	resBody, err := io.ReadAll(io.LimitReader(res.Body, maxDownloadSize))
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
@@ -167,14 +174,14 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 	file := bytes.NewReader(resBody)
 	mimeType := http.DetectContentType(resBody)
 	fileExtension, err := utils.GetExtensionFromMimeType(mimeType)
-	if err != nil {
-		return ctx.Status(500).JSON(models.GenericResponse{
-			Result:  false,
-			Message: err.Error(),
-		})
+	if err != nil || len(fileExtension) == 0 {
+		fileExtension = []string{".bin"}
 	}
 
-	minioClient := ctx.Locals("minio").(*config.MinIOClients)
+	minioClient, err := getLocal[*config.MinIOClients](ctx, "minio")
+	if err != nil {
+		return err
+	}
 	_, err = minioClient.Storage.Conn().PutObject(
 		ctx.UserContext(),
 		body.Bucket,

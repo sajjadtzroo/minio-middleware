@@ -16,10 +16,15 @@ func CustomErrorHandler(ctx *fiber.Ctx, err error) error {
 		code = e.Code
 	}
 
-	// Send custom error response
+	message := err.Error()
+	if code >= 500 {
+		log.Printf("Internal error: %v", err)
+		message = "Internal server error"
+	}
+
 	if jsonErr := ctx.Status(code).JSON(models.GenericResponse{
 		Result:  false,
-		Message: err.Error(),
+		Message: message,
 	}); jsonErr != nil {
 		log.Printf("Failed to send error response: %v", jsonErr)
 	}

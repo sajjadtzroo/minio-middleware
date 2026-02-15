@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const maxAPIResponseSize = 1 * 1024 * 1024 // 1 MB for API responses
+
 func getBaseURL() string {
 	if url := os.Getenv("INSTAGRAM_API_BASE_URL"); url != "" {
 		return strings.TrimRight(url, "/")
@@ -66,6 +68,10 @@ type GetProfileV1Response struct {
 }
 
 func New(token string) *InstagramApi {
+	if token == "" {
+		log.Printf("⚠️ InstagramApi created with empty token")
+	}
+
 	client := &http.Client{
 		Timeout: 60 * time.Second,
 	}
@@ -98,7 +104,7 @@ func (h *InstagramApi) getProfileV1(username string) (GetProfileV1Response, erro
 	}
 
 	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxAPIResponseSize))
 	if err != nil {
 		return GetProfileV1Response{}, err
 	}

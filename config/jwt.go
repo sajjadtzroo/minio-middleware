@@ -16,5 +16,9 @@ func GetJwtKey() string {
 		log.Fatal("JWT_KEY or JWT_SECRET environment variable must be set")
 	}
 
+	if len(key) < 16 {
+		log.Printf("⚠️ WARNING: JWT_KEY is shorter than 16 characters, this is insecure")
+	}
+
 	return key
 }

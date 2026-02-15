@@ -5,7 +5,6 @@ import (
 	"go-uploader/pkg/telegram_api"
 	"log"
 	"path/filepath"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -51,9 +50,12 @@ func TransferFileId(ctx *fiber.Ctx) error {
 	log.Printf("🔄 Starting file transfer: FileID %s from external bot to scope '%s'", req.FileId, req.BotName)
 
 	// Get destination named bots for enhanced logging
-	botScopeConfig := ctx.Locals("BOT_SCOPE_CONFIG").(*config.BotScopeConfiguration)
-	destNamedBots := botScopeConfig.GetNamedBots(strings.ToLower(req.BotName))
-	logNamedBots(destNamedBots, strings.ToLower(req.BotName))
+	botScopeConfig, err := getLocal[*config.BotScopeConfiguration](ctx, "BOT_SCOPE_CONFIG")
+	if err != nil {
+		return err
+	}
+	destNamedBots := botScopeConfig.GetNamedBots(req.BotName)
+	logNamedBots(destNamedBots, req.BotName)
 
 	sourceBotAPI := telegram_api.New(req.BotToken)
 	log.Printf("📥 Source bot: %s", sourceBotAPI.String())
@@ -67,8 +69,8 @@ func TransferFileId(ctx *fiber.Ctx) error {
 		})
 	}
 
-	splitSourceFilePath := strings.Split(sourceFilePath, req.BotToken)
-	fileData, contentType, err := sourceBotAPI.DownloadFile(splitSourceFilePath[1])
+	filePathString := sourceBotAPI.Explode(sourceFilePath)
+	fileData, contentType, err := sourceBotAPI.DownloadFile(filePathString)
 	if err != nil {
 		log.Printf("❌ Failed to download file: %s -> %v", sourceFilePath, err.Error())
 		return ctx.Status(500).JSON(fiber.Map{
