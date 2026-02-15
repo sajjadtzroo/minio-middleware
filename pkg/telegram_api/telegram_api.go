@@ -3,7 +3,6 @@ package telegram_api
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,9 +15,14 @@ import (
 	"time"
 )
 
-const BaseUrl = "http://94.130.99.214"
-// const BaseUrl = "https://api.telegram.org"
 const ContentType = "application/json"
+
+func getBaseURL() string {
+	if url := os.Getenv("TELEGRAM_API_BASE_URL"); url != "" {
+		return strings.TrimRight(url, "/")
+	}
+	return "https://api.telegram.org"
+}
 
 type TelegramAPI struct {
 	client *http.Client
@@ -27,9 +31,6 @@ type TelegramAPI struct {
 
 func New(token string) *TelegramAPI {
 	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
 		Timeout: 300 * time.Second,
 	}
 
@@ -43,8 +44,8 @@ func New(token string) *TelegramAPI {
 
 // String returns a safe string representation for logging
 func (h *TelegramAPI) String() string {
-	if len(h.token) > 10 {
-		return fmt.Sprintf("TelegramAPI{token: %s...}", h.token[:10])
+	if len(h.token) > 4 {
+		return fmt.Sprintf("TelegramAPI{token: ...%s}", h.token[len(h.token)-4:])
 	}
 	return "TelegramAPI{token: ***}"
 }
@@ -63,7 +64,7 @@ func (h *TelegramAPI) GetFile(fileId string) (string, error) {
 	bodyRaw := map[string]string{
 		"file_id": fileId,
 	}
-	reqURL := BaseUrl + "/bot" + h.token + "/getFile"
+	reqURL := getBaseURL() + "/bot" + h.token + "/getFile"
 	body, err := json.Marshal(bodyRaw)
 	if err != nil {
 		return "", err
@@ -104,7 +105,7 @@ func (h *TelegramAPI) DownloadFile(filePath string) ([]byte, string, error) {
 		log.Printf("📥 Direct download from Telegram API: %s", reqURL)
 	} else {
 		// دانلود از پروکسی/سرور محلی
-		reqURL = BaseUrl + "/file/" + h.token + "/" + cleanPath
+		reqURL = getBaseURL() + "/file/" + h.token + "/" + cleanPath
 		log.Printf("📥 Downloading from proxy server: %s", reqURL)
 	}
 
@@ -320,13 +321,13 @@ func (h *TelegramAPI) UploadFile(contentType string, fileName string, data []byt
 	var reqUrl string
 	switch formField {
 	case "photo":
-		reqUrl = BaseUrl + "/bot" + h.token + "/sendPhoto"
+		reqUrl = getBaseURL() + "/bot" + h.token + "/sendPhoto"
 	case "audio":
-		reqUrl = BaseUrl + "/bot" + h.token + "/sendAudio"
+		reqUrl = getBaseURL() + "/bot" + h.token + "/sendAudio"
 	case "video":
-		reqUrl = BaseUrl + "/bot" + h.token + "/sendVideo"
+		reqUrl = getBaseURL() + "/bot" + h.token + "/sendVideo"
 	default:
-		reqUrl = BaseUrl + "/bot" + h.token + "/sendDocument"
+		reqUrl = getBaseURL() + "/bot" + h.token + "/sendDocument"
 	}
 
 	// نوشتن chat_id
@@ -422,9 +423,71 @@ func (h *TelegramAPI) UploadFile(contentType string, fileName string, data []byt
 
 // متدهای با Context support
 func (h *TelegramAPI) GetFileWithContext(ctx context.Context, fileId string) (string, error) {
-	return h.GetFile(fileId)
+	bodyRaw := map[string]string{
+		"file_id": fileId,
+	}
+	reqURL := getBaseURL() + "/bot" + h.token + "/getFile"
+	body, err := json.Marshal(bodyRaw)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", ContentType)
+
+	response, err := h.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+
+	defer response.Body.Close()
+	resBody, _ := io.ReadAll(response.Body)
+	if response.StatusCode != 200 {
+		return "", errors.New("telegram failed " + string(resBody))
+	}
+
+	var result GetFileResponse
+	if err := json.Unmarshal(resBody, &result); err != nil {
+		return "", err
+	}
+
+	log.Printf("📁 GetFileWithContext successful: %s (size: %d bytes)", result.Result.FilePath, result.Result.FileSize)
+	return result.Result.FilePath, nil
 }
 
 func (h *TelegramAPI) DownloadFileWithContext(ctx context.Context, filePath string) ([]byte, string, error) {
-	return h.DownloadFile(filePath)
+	cleanPath := strings.TrimPrefix(filePath, "/")
+
+	directDownload := os.Getenv("TELEGRAM_DIRECT_DOWNLOAD") == "true"
+
+	var reqURL string
+	if directDownload {
+		reqURL = "https://api.telegram.org/file/bot" + h.token + "/" + cleanPath
+	} else {
+		reqURL = getBaseURL() + "/file/" + h.token + "/" + cleanPath
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("request creation failed: %w", err)
+	}
+
+	response, err := h.client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("request failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode == 200 {
+		resBody, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read response: %w", err)
+		}
+		return resBody, response.Header.Get("Content-Type"), nil
+	}
+
+	return nil, "", fmt.Errorf("download failed (status %d)", response.StatusCode)
 }

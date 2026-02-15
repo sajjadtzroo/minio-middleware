@@ -3,7 +3,6 @@ package controllers
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"go-uploader/config"
@@ -132,8 +131,6 @@ func getContentTypeFromExtension(ext string) string {
 }
 
 func DownloadFromTelegram(ctx *fiber.Ctx) error {
-	ctx.SetUserContext(context.Background())
-
 	botName := ctx.Params("botName", "")
 	if !slices.Contains(utils.ValidBuckets, botName) {
 		return ctx.Status(400).JSON(models.GenericResponse{
@@ -188,8 +185,13 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 				log.Printf("⚠️ Failed to get object stat, continuing: %v", err)
 			}
 
-			data, _ := io.ReadAll(object)
+			data, readErr := io.ReadAll(object)
 			_ = object.Close()
+
+			if readErr != nil {
+				log.Printf("❌ Failed to read cached object: %v", readErr)
+				break
+			}
 
 			if err != nil {
 				log.Printf("❌ Failed to read cached object: %v", err)
@@ -274,7 +276,14 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 			log.Printf("📁 Path contains 'animation': %v", strings.Contains(filePathStr, "animation"))
 		}
 
-		filePathString := selectedBotApi.Explode(filePath.(string))
+		filePathStr, ok := filePath.(string)
+		if !ok {
+			return ctx.Status(500).JSON(models.GenericResponse{
+				Result:  false,
+				Message: "unexpected file path type from Telegram",
+			})
+		}
+		filePathString := selectedBotApi.Explode(filePathStr)
 		log.Printf("📁 After Explode: %s", filePathString)
 
 		// ⚡ مهم: اول با همون باتی که GetFile برنده شده دانلود کن
@@ -367,8 +376,6 @@ func DownloadFromTelegram(ctx *fiber.Ctx) error {
 }
 
 func UploadToTelegram(ctx *fiber.Ctx) error {
-	ctx.SetUserContext(context.Background())
-
 	botName := ctx.Params("botName", "")
 	if !slices.Contains(utils.ValidBuckets, botName) {
 		return ctx.Status(400).JSON(models.GenericResponse{
@@ -485,9 +492,6 @@ func UploadToTelegramViaLink(ctx *fiber.Ctx) error {
 	}
 
 	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
 		Timeout: 60 * time.Second,
 	}
 

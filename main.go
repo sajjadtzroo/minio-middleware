@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"go-uploader/config"
 	"go-uploader/controllers"
 	"go-uploader/middleware"
@@ -8,7 +9,9 @@ import (
 	"go-uploader/utils"
 	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -18,6 +21,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/idempotency"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
 )
@@ -80,6 +85,11 @@ func main() {
 		log.Printf("⚠️ Warning: No bot tokens configured, most features will not work!")
 	}
 
+	// Log MAX_RACING_BOTS configuration
+	if maxBots := os.Getenv("MAX_RACING_BOTS"); maxBots != "" {
+		log.Printf("✅ MAX_RACING_BOTS: %s", maxBots)
+	}
+
 	log.Printf("🔧 Starting server initialization...")
 
 	// Initialize MinIO
@@ -128,14 +138,23 @@ func main() {
 
 	// Middlewares
 	app.Use(recover.New())
+	app.Use(logger.New(logger.Config{
+		Format:     "${time} | ${status} | ${latency} | ${method} | ${path}\n",
+		TimeFormat: "2006-01-02 15:04:05",
+	}))
 	app.Use(etag.New())
 	app.Use(earlydata.New())
 	app.Use(idempotency.New())
 	app.Use(helmet.New())
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "*",
-		AllowHeaders: "*",
+		AllowOrigins: func() string {
+			if origins := os.Getenv("CORS_ALLOWED_ORIGINS"); origins != "" {
+				return origins
+			}
+			return "*"
+		}(),
+		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
 	}))
 
 	// Use moderate compression for better performance balance
@@ -160,6 +179,13 @@ func main() {
 		ctx.Locals("INSTAGRAM_API", instagramApi)
 		ctx.Locals("SNITCH_CONFIG", snitchConfiguration)
 		return ctx.Next()
+	})
+
+	// Rate limiter for upload/transfer endpoints
+	uploadLimiter := limiter.New(limiter.Config{
+		Max:               30,
+		Expiration:        1 * time.Minute,
+		LimiterMiddleware: limiter.SlidingWindow{},
 	})
 
 	// Health check endpoint
@@ -209,13 +235,12 @@ func main() {
 	app.Get("/zip/performance", controllers.GetZipPerformanceInfo)
 
 	// Telegram upload operations
-	app.Post("/upload/telegram/link/:botName", controllers.UploadToTelegramViaLink)
-	app.Post("/upload/telegram/link/:botName", JWTMiddleware, controllers.UploadToTelegramViaLink)
-	app.Post("/upload/telegram/:botName", JWTMiddleware, controllers.UploadToTelegram)
-	app.Post("/upload/telegram/:botName/:specificBot", JWTMiddleware, controllers.UploadToTelegram)
+	app.Post("/upload/telegram/link/:botName", uploadLimiter, JWTMiddleware, controllers.UploadToTelegramViaLink)
+	app.Post("/upload/telegram/:botName", uploadLimiter, JWTMiddleware, controllers.UploadToTelegram)
+	app.Post("/upload/telegram/:botName/:specificBot", uploadLimiter, JWTMiddleware, controllers.UploadToTelegram)
 
 	// Transfer operations
-	app.Post("/transfer/telegram", controllers.TransferFileId)
+	app.Post("/transfer/telegram", uploadLimiter, JWTMiddleware, controllers.TransferFileId)
 
 	// Profile operations
 	app.Get("/profile/:media/:pk/:userName", controllers.DownloadProfile)
@@ -230,7 +255,7 @@ func main() {
 	app.Get("/direct/*", controllers.DownloadFile)
 
 	// Bot scope management
-	app.Get("/bot-scopes", controllers.ListBotScopes)
+	app.Get("/bot-scopes", JWTMiddleware, controllers.ListBotScopes)
 
 	// 404 handler
 	app.Use(func(c *fiber.Ctx) error {
@@ -253,10 +278,26 @@ func main() {
 	log.Printf("✅ Server starting on http://%s:%s", HOST, PORT)
 	log.Printf("========================================")
 
-	// Start server
-	err := app.Listen(HOST + ":" + PORT)
-	if err != nil {
-		_ = minioClients.Storage.Close()
-		log.Fatal("Failed to start server: ", err)
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		if err := app.Listen(HOST + ":" + PORT); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	<-quit
+	log.Println("Shutting down server...")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := app.ShutdownWithContext(shutdownCtx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
 	}
+
+	_ = minioClients.Storage.Close()
+	log.Println("Server stopped gracefully")
 }

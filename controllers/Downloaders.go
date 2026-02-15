@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -15,6 +14,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -25,8 +26,6 @@ import (
 )
 
 func DownloadFile(ctx *fiber.Ctx) error {
-	ctx.SetUserContext(context.Background())
-
 	reqPath := strings.Split(ctx.Path(), "/")
 	if len(reqPath) < 4 {
 		if reqPath[2] == "favicon.ico" {
@@ -53,7 +52,11 @@ func DownloadFile(ctx *fiber.Ctx) error {
 
 	for info := range objectInfo {
 		if info.Size > 0 {
-			if strings.Split(info.Key, ".")[0] == path {
+			keyBase := info.Key
+			if dotIdx := strings.LastIndex(info.Key, "."); dotIdx != -1 {
+				keyBase = info.Key[:dotIdx]
+			}
+			if keyBase == path {
 				object, err := minioClient.Storage.Conn().GetObject(ctx.UserContext(), bucket, info.Key, minio.GetObjectOptions{})
 				if err != nil {
 					return ctx.Status(500).JSON(models.GenericResponse{
@@ -87,8 +90,6 @@ type TelegramProfileResponse struct {
 }
 
 func DownloadProfile(ctx *fiber.Ctx) error {
-	ctx.SetUserContext(context.Background())
-
 	pk := ctx.Params("pk")
 	media := ctx.Params("media")
 	userName := ctx.Params("username")
@@ -111,7 +112,11 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 	for info := range objectInfo {
 		if info.Size > 0 {
-			if strings.Split(info.Key, ".")[0] == pk {
+			keyBase := info.Key
+			if dotIdx := strings.LastIndex(info.Key, "."); dotIdx != -1 {
+				keyBase = info.Key[:dotIdx]
+			}
+			if keyBase == pk {
 				minioGetCtx, cancelMinIOGet := context.WithTimeout(ctx.UserContext(), 30*time.Second)
 				object, err := minioClient.Storage.Conn().GetObject(minioGetCtx, bucketName, info.Key, minio.GetObjectOptions{})
 				if err != nil {
@@ -139,11 +144,15 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	if media == "telegram" {
+		tgObserverURL := os.Getenv("TGOBSERVER_URL")
+		if tgObserverURL == "" {
+			tgObserverURL = "https://tgobserver.darkube.app"
+		}
 		var reqUrl string
 		if strings.HasPrefix(userName, "@") {
-			reqUrl = "https://tgobserver.darkube.app/getChannelInfo?channel=" + userName
+			reqUrl = tgObserverURL + "/getChannelInfo?channel=" + url.QueryEscape(userName)
 		} else {
-			reqUrl = "https://tgobserver.darkube.app/getChannelInfo?channel_link=" + userName
+			reqUrl = tgObserverURL + "/getChannelInfo?channel_link=" + url.QueryEscape(userName)
 		}
 
 		telegramReqCtx, cancelTelegramCtx := context.WithTimeout(ctx.UserContext(), 60*time.Second)
@@ -157,9 +166,6 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 
 		httpClient := http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
 			Timeout: 60 * time.Second,
 		}
 		res, err := httpClient.Do(req)
@@ -189,7 +195,7 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 		photoReqCtx, cancelPhotoReq := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 		defer cancelPhotoReq()
-		photoReq, err := http.NewRequestWithContext(photoReqCtx, "GET", "https://tgobserver.darkube.app"+telegramProfile.ProfilePhoto, nil)
+		photoReq, err := http.NewRequestWithContext(photoReqCtx, "GET", tgObserverURL+telegramProfile.ProfilePhoto, nil)
 		if err != nil {
 			return ctx.Status(500).JSON(models.GenericResponse{
 				Result:  false,
@@ -199,9 +205,6 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 
 		httpClientPhotoReq := http.Client{
 			Timeout: 60 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
 		}
 		photoRes, err := httpClientPhotoReq.Do(photoReq)
 		if err != nil {
@@ -227,13 +230,22 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 		}
 
 		mimeType := http.DetectContentType(responseFileBody)
+		ext := ".jpg"
+		switch {
+		case strings.Contains(mimeType, "image/png"):
+			ext = ".png"
+		case strings.Contains(mimeType, "image/gif"):
+			ext = ".gif"
+		case strings.Contains(mimeType, "image/webp"):
+			ext = ".webp"
+		}
 		minioPutObjectCtx, cancelMinioPutObject := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 		defer cancelMinioPutObject()
 		file := bytes.NewReader(responseFileBody)
 		_, err = minioClient.Storage.Conn().PutObject(
 			minioPutObjectCtx,
 			bucketName,
-			pk+".jpg",
+			pk+ext,
 			file,
 			file.Size(),
 			minio.PutObjectOptions{},
@@ -318,13 +330,22 @@ func DownloadProfile(ctx *fiber.Ctx) error {
 	}
 
 	mimeType := http.DetectContentType(bodyRaw)
+	ext := ".jpg"
+	switch {
+	case strings.Contains(mimeType, "image/png"):
+		ext = ".png"
+	case strings.Contains(mimeType, "image/gif"):
+		ext = ".gif"
+	case strings.Contains(mimeType, "image/webp"):
+		ext = ".webp"
+	}
 	putObjectCtx, cancelPutObject := context.WithTimeout(ctx.UserContext(), 60*time.Second)
 	defer cancelPutObject()
 	file := bytes.NewReader(bodyRaw)
 	_, err = minioClient.Storage.Conn().PutObject(
 		putObjectCtx,
 		bucketName,
-		pk+".jpg",
+		pk+ext,
 		file,
 		file.Size(),
 		minio.PutObjectOptions{},
@@ -365,6 +386,14 @@ func ZipMultipleFiles(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusBadRequest).JSON(models.GenericResponse{
 			Result:  false,
 			Message: err.Error(),
+		})
+	}
+
+	const maxZipFiles = 50
+	if len(requestData) > maxZipFiles {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: fmt.Sprintf("too many files: %d exceeds maximum of %d", len(requestData), maxZipFiles),
 		})
 	}
 
@@ -527,6 +556,14 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 		})
 	}
 
+	const maxZipFilesOpt = 50
+	if len(requestData) > maxZipFilesOpt {
+		return ctx.Status(400).JSON(models.GenericResponse{
+			Result:  false,
+			Message: fmt.Sprintf("too many files: %d exceeds maximum of %d", len(requestData), maxZipFilesOpt),
+		})
+	}
+
 	// Validate input data early - حداقل 2 المان باید باشه (botName, fileId)
 	// المان سوم (username) اختیاری هست
 	for _, data := range requestData {
@@ -553,9 +590,7 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 	// Create a buffered pipe for better performance
 	pipeReader, pipeWriter := io.Pipe()
 
-	// Use buffer for zip writer to improve I/O performance
-	bufferedWriter := &bytes.Buffer{}
-	zipWriter := zip.NewWriter(io.MultiWriter(pipeWriter, bufferedWriter))
+	zipWriter := zip.NewWriter(pipeWriter)
 
 	// Channel for coordinating file download and zip writing
 	type fileResult struct {
@@ -571,8 +606,6 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 	fileResultChan := make(chan fileResult, len(requestData))
 	var downloadWg sync.WaitGroup
 
-	// Track download progress
-	downloadProgress := &sync.Map{}
 	totalFiles := len(requestData)
 
 	log.Printf("Starting ZIP creation for %d files", totalFiles)
@@ -596,7 +629,6 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 
-			downloadProgress.Store(fileID, "downloading")
 			log.Printf("Starting download %d/%d: %s (name: %s)", index+1, totalFiles, fileID, fileName)
 
 			botAPIs := selectBotAPI(ctx, strings.ToLower(botName))
@@ -642,7 +674,6 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 			}
 
 			if downloadErr != nil {
-				downloadProgress.Store(fileID, "failed")
 				fileResultChan <- fileResult{fileID: fileID, fileName: fileName, err: downloadErr}
 				return
 			}
@@ -658,7 +689,6 @@ func ZipMultipleFilesOptimized(ctx *fiber.Ctx) error {
 				fileExtension = parts[1]
 			}
 
-			downloadProgress.Store(fileID, "completed")
 			log.Printf("Download completed %d/%d: %s as %s (%d bytes)", index+1, totalFiles, fileID, fileName, len(fileData))
 
 			fileResultChan <- fileResult{

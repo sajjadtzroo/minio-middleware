@@ -2,16 +2,22 @@ package instagram_api
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
-const BaseUrl = "https://api.hikerapi.com"
+func getBaseURL() string {
+	if url := os.Getenv("INSTAGRAM_API_BASE_URL"); url != "" {
+		return strings.TrimRight(url, "/")
+	}
+	return "https://api.hikerapi.com"
+}
 
 type InstagramApi struct {
 	client *http.Client
@@ -61,9 +67,6 @@ type GetProfileV1Response struct {
 
 func New(token string) *InstagramApi {
 	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
 		Timeout: 60 * time.Second,
 	}
 
@@ -78,7 +81,7 @@ func New(token string) *InstagramApi {
 func (h *InstagramApi) getProfileV1(username string) (GetProfileV1Response, error) {
 	reqContext, cancel := context.WithTimeout(context.Background(), time.Second*60)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqContext, "GET", BaseUrl+"/v1/user/by/username", nil)
+	req, err := http.NewRequestWithContext(reqContext, "GET", getBaseURL()+"/v1/user/by/username", nil)
 	if err != nil {
 		return GetProfileV1Response{}, err
 	}

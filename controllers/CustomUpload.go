@@ -2,8 +2,6 @@ package controllers
 
 import (
 	"bytes"
-	"context"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"github.com/gofiber/fiber/v2"
@@ -21,8 +19,6 @@ import (
 )
 
 func UploadFile(ctx *fiber.Ctx) error {
-	ctx.SetUserContext(context.Background())
-
 	form, err := ctx.MultipartForm()
 	if err != nil {
 		return ctx.Status(400).JSON(models.GenericResponse{
@@ -41,16 +37,15 @@ func UploadFile(ctx *fiber.Ctx) error {
 	file := form.File["file"][0]
 
 	src, err := file.Open()
-	defer func(src multipart.File) {
-		_ = src.Close()
-	}(src)
-
 	if err != nil {
 		return ctx.Status(500).JSON(models.GenericResponse{
 			Result:  false,
 			Message: err.Error(),
 		})
 	}
+	defer func(src multipart.File) {
+		_ = src.Close()
+	}(src)
 
 	buf := bytes.NewBuffer(nil)
 	if _, err := io.Copy(buf, src); err != nil {
@@ -100,8 +95,6 @@ func UploadFile(ctx *fiber.Ctx) error {
 }
 
 func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
-	ctx.SetUserContext(context.Background())
-
 	bodyRaw := ctx.Body()
 	var body models.DownLoadFromLinkRequest
 	if err := json.Unmarshal(bodyRaw, &body); err != nil {
@@ -149,9 +142,6 @@ func DownloadFromLinkAndUpload(ctx *fiber.Ctx) error {
 	}
 
 	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
 		Timeout: 60 * time.Second,
 	}
 
