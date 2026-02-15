@@ -33,7 +33,7 @@ const maxAPIResponseSize = 1 * 1024 * 1024 // 1 MB for JSON API responses
 func DownloadFile(ctx *fiber.Ctx) error {
 	reqPath := strings.Split(ctx.Path(), "/")
 	if len(reqPath) < 4 {
-		if reqPath[2] == "favicon.ico" {
+		if len(reqPath) > 2 && reqPath[2] == "favicon.ico" {
 			return ctx.SendStatus(404)
 		}
 
